@@ -14,10 +14,18 @@ internal/middleware —— 日志、鉴权、限流的入口位
 handler（HTTP）
 
 service（业务）
-
 repo（数据库）
-
 knowledge:知识库
 post: 交流区
 resource:资源
+
+
+community：病友交流区
+
+
+go get github.com/golang-jwt/jwt/v5
+
+
+
+
 
