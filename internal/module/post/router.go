@@ -10,4 +10,6 @@ func Register(r *gin.RouterGroup) {
 	post.POST("/posts/:id/like", LikePost)           // 点赞帖子
 	post.GET("/posts/:id/comments", GetPostComments) // 获取帖子评论
 	post.POST("/posts/:id/comments", CreateComment)  // 创建评论
+	post.GET("/posts/:id", GetPostDetail)            // 获取帖子详情
+
 }

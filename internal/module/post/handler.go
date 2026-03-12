@@ -342,9 +342,7 @@ func LikePost(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
-// handler.go
-
-// GetPostComments 获取帖子评论列表
+// GetPostComments 获取帖子评论树
 func GetPostComments(c *gin.Context) {
 	// 从 URL 参数中获取帖子 ID
 	postID := c.Param("id")
@@ -371,14 +369,14 @@ func GetPostComments(c *gin.Context) {
 		return
 	}
 
-	// 查询评论列表
+	// 查询所有评论（包括一级和子级评论）
 	query := `
 		SELECT 
-			c.id, c.user_id, u.display_name, c.content, c.created_at
+			c.id, c.user_id, u.display_name, c.content, c.parent_id, c.root_id, c.created_at
 		FROM comment c
 		LEFT JOIN user u ON c.user_id = u.id
-		WHERE c.post_id = ?
-		ORDER BY c.created_at ASC
+		WHERE c.target_type = 'post' AND c.target_id = ?
+		ORDER BY c.root_id ASC, c.created_at ASC
 	`
 	rows, err := db.MySQL.Query(query, id)
 	if err != nil {
@@ -391,44 +389,80 @@ func GetPostComments(c *gin.Context) {
 	}
 	defer rows.Close()
 
-	// 解析结果
-	var comments []map[string]interface{}
+	// 定义评论节点结构
+	type CommentNode struct {
+		ID          int64          `json:"id"`
+		UserID      int64          `json:"user_id"`
+		DisplayName string         `json:"display_name"`
+		Content     string         `json:"content"`
+		ParentID    int64          `json:"parent_id"`
+		RootID      int64          `json:"root_id"`
+		CreatedAt   time.Time      `json:"created_at"`
+		Children    []*CommentNode `json:"children,omitempty"`
+	}
+
+	// 存储所有评论节点
+	allComments := make(map[int64]*CommentNode)
+	var rootComments []*CommentNode
+
+	// 扫描数据库结果
 	for rows.Next() {
 		var comment struct {
 			ID          int64          `db:"id"`
 			UserID      int64          `db:"user_id"`
 			DisplayName sql.NullString `db:"display_name"`
 			Content     string         `db:"content"`
+			ParentID    int64          `db:"parent_id"`
+			RootID      int64          `db:"root_id"`
 			CreatedAt   time.Time      `db:"created_at"`
 		}
-		if err := rows.Scan(&comment.ID, &comment.UserID, &comment.DisplayName, &comment.Content, &comment.CreatedAt); err != nil {
+		if err := rows.Scan(&comment.ID, &comment.UserID, &comment.DisplayName, &comment.Content, &comment.ParentID, &comment.RootID, &comment.CreatedAt); err != nil {
 			fmt.Printf("Scan comment error: %v\n", err)
 			continue
 		}
 
-		comments = append(comments, map[string]interface{}{
-			"id":           comment.ID,
-			"user_id":      comment.UserID,
-			"display_name": comment.DisplayName.String,
-			"content":      comment.Content,
-			"created_at":   comment.CreatedAt.Format(time.RFC3339),
-		})
+		// 创建评论节点
+		node := &CommentNode{
+			ID:          comment.ID,
+			UserID:      comment.UserID,
+			DisplayName: comment.DisplayName.String,
+			Content:     comment.Content,
+			ParentID:    comment.ParentID,
+			RootID:      comment.RootID,
+			CreatedAt:   comment.CreatedAt,
+		}
+
+		// 将节点存储到映射中
+		allComments[comment.ID] = node
+
+		// 如果是一级评论，则加入根评论列表
+		if comment.ParentID == 0 {
+			rootComments = append(rootComments, node)
+		}
+	}
+
+	// 构建评论树
+	for _, node := range allComments {
+		if node.ParentID != 0 {
+			parentNode, exists := allComments[node.ParentID]
+			if exists {
+				parentNode.Children = append(parentNode.Children, node)
+			}
+		}
 	}
 
 	// 构造响应数据
 	response := gin.H{
 		"code":    200,
 		"message": "success",
-		"data":    comments,
+		"data":    rootComments, // 返回嵌套的树形结构
 	}
 
 	// 返回结果
 	c.JSON(http.StatusOK, response)
 }
 
-// handler.go
-
-// CreateComment 创建评论
+// 创建评论
 func CreateComment(c *gin.Context) {
 	// 从 URL 参数中获取帖子 ID
 	postID := c.Param("id")
@@ -457,9 +491,9 @@ func CreateComment(c *gin.Context) {
 
 	// 定义请求结构体
 	var req struct {
-		UserID     int64  `json:"user_id" binding:"required"`
-		Content    string `json:"content" binding:"required"`
-		TargetType string `json:"target_type" binding:"required"` // post/comment
+		UserID   int64  `json:"user_id" binding:"required"`
+		Content  string `json:"content" binding:"required"`
+		ParentID *int64 `json:"parent_id"` // 可选字段，表示回复的评论 ID
 	}
 
 	// 绑定请求参数
@@ -471,13 +505,57 @@ func CreateComment(c *gin.Context) {
 		return
 	}
 
+	// 初始化默认值
+	parentID := int64(0)
+	rootID := int64(0)
+
+	// 如果指定了 parent_id，则查询父评论是否存在并确定 root_id
+	if req.ParentID != nil && *req.ParentID > 0 {
+		parentID = *req.ParentID
+
+		// 查询父评论是否存在且属于当前帖子
+		var parentComment struct {
+			ID     int64 `db:"id"`
+			RootID int64 `db:"root_id"`
+		}
+		parentQuery := "SELECT id, root_id FROM comment WHERE id = ? AND target_type = 'post' AND target_id = ?"
+		err = db.MySQL.QueryRow(parentQuery, parentID, id).Scan(&parentComment.ID, &parentComment.RootID)
+		if err != nil || parentComment.ID == 0 {
+			c.JSON(http.StatusNotFound, gin.H{
+				"code":    404,
+				"message": "父评论不存在或不属于当前帖子",
+			})
+			return
+		}
+
+		// 设置 root_id
+		if parentComment.RootID == 0 {
+			rootID = parentID // 父评论是一级评论
+		} else {
+			rootID = parentComment.RootID // 父评论是子评论
+		}
+	}
+
+	// 开启事务
+	tx, err := db.MySQL.Begin()
+	if err != nil {
+		fmt.Printf("Begin transaction error: %v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "开启事务失败",
+		})
+		return
+	}
+	defer tx.Rollback() // 确保事务回滚
+
 	// 插入评论数据
 	insertQuery := `
-		INSERT INTO comment (target_id,target_type, user_id, content, created_at)
-		VALUES (?,?,?, ?, ?)
+		INSERT INTO comment (
+			target_id, target_type, user_id, content, parent_id, root_id, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?)
 	`
 	now := time.Now()
-	res, err := db.MySQL.Exec(insertQuery, id, req.TargetType, req.UserID, req.Content, now)
+	res, err := tx.Exec(insertQuery, id, "post", req.UserID, req.Content, parentID, rootID, now)
 	if err != nil {
 		fmt.Printf("Insert comment error: %v\n", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -489,6 +567,33 @@ func CreateComment(c *gin.Context) {
 
 	// 获取插入的评论 ID
 	commentID, _ := res.LastInsertId()
+
+	// 更新父评论或帖子的 reply_count
+	if parentID > 0 {
+		// 更新父评论的 reply_count
+		_, err = tx.Exec("UPDATE comment SET reply_count = reply_count + 1 WHERE id = ?", parentID)
+	} else {
+		// 更新帖子的 comment_count
+		_, err = tx.Exec("UPDATE post SET comment_count = comment_count + 1 WHERE id = ?", id)
+	}
+	if err != nil {
+		fmt.Printf("Update reply/comment count error: %v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "更新评论计数失败",
+		})
+		return
+	}
+
+	// 提交事务
+	if err := tx.Commit(); err != nil {
+		fmt.Printf("Commit transaction error: %v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "提交事务失败",
+		})
+		return
+	}
 
 	// 查询用户昵称
 	var displayName sql.NullString
@@ -513,10 +618,98 @@ func CreateComment(c *gin.Context) {
 			"user_id":      req.UserID,
 			"display_name": displayName.String,
 			"content":      req.Content,
+			"parent_id":    parentID,
+			"root_id":      rootID,
 			"created_at":   now.Format(time.RFC3339),
 		},
 	}
 
 	// 返回结果
 	c.JSON(http.StatusCreated, response)
+}
+
+// GetPostDetail 获取帖子详情
+func GetPostDetail(c *gin.Context) {
+	// 从 URL 参数中获取帖子 ID
+	postID := c.Param("id")
+
+	// 验证帖子 ID 是否为有效整数
+	id, err := strconv.ParseInt(postID, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "无效的帖子 ID",
+		})
+		return
+	}
+
+	// 查询帖子详情
+	query := `
+		SELECT 
+			p.id, p.title, p.content, p.user_id, u.display_name, p.created_at, 
+			p.images, p.like_count, p.comment_count
+		FROM post p
+		LEFT JOIN user u ON p.user_id = u.id
+		WHERE p.id = ? AND p.status = 1
+	`
+	var post struct {
+		ID           int64          `db:"id"`
+		Title        sql.NullString `db:"title"`
+		Content      string         `db:"content"`
+		UserID       int64          `db:"user_id"`
+		DisplayName  sql.NullString `db:"display_name"`
+		CreatedAt    time.Time      `db:"created_at"`
+		Images       []byte         `db:"images"`
+		LikeCount    int            `db:"like_count"`
+		CommentCount int            `db:"comment_count"`
+	}
+	err = db.MySQL.QueryRow(query, id).Scan(
+		&post.ID, &post.Title, &post.Content, &post.UserID, &post.DisplayName,
+		&post.CreatedAt, &post.Images, &post.LikeCount, &post.CommentCount,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{
+				"code":    404,
+				"message": "帖子不存在",
+			})
+			return
+		}
+		fmt.Printf("Query post detail error: %v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "查询帖子详情失败",
+		})
+		return
+	}
+
+	// 处理 JSON 字段（图片）
+	var images []string
+	if len(post.Images) > 0 {
+		json.Unmarshal(post.Images, &images)
+	}
+
+	// 默认用户未点赞（实际开发中应从 JWT 或上下文中获取用户 ID 进行判断）
+	isLiked := false
+
+	// 构造响应数据
+	response := gin.H{
+		"code":    200,
+		"message": "success",
+		"data": map[string]interface{}{
+			"id":            post.ID,
+			"title":         post.Title.String,
+			"content":       post.Content,
+			"user_id":       post.UserID,
+			"display_name":  post.DisplayName.String,
+			"created_at":    post.CreatedAt.Format(time.RFC3339),
+			"images":        images,
+			"like_count":    post.LikeCount,
+			"comment_count": post.CommentCount,
+			"is_liked":      isLiked,
+		},
+	}
+
+	// 返回结果
+	c.JSON(http.StatusOK, response)
 }
