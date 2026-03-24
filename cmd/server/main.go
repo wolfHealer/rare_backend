@@ -15,7 +15,11 @@ func main() {
 
 	// 2. 配置 CORS 中间件
 	config := cors.DefaultConfig()
-	config.AllowOrigins = []string{"http://localhost:5173"} // 允许的前端域名
+	config.AllowOrigins = []string{
+		"http://localhost:5174",
+		"http://localhost:5173",
+		"http://127.0.0.1:5174",
+	} // 允许的前端域名
 	config.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
 	config.AllowHeaders = []string{"Origin", "Content-Type", "Authorization"}
 	r.Use(cors.New(config))

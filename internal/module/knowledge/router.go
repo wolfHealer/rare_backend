@@ -4,15 +4,19 @@ import "github.com/gin-gonic/gin"
 
 func Register(r *gin.RouterGroup) {
 	knowledge := r.Group("/knowledge")
-	// 具体疾病
-	knowledge.POST("/disease", CreateDisease)     // 创建疾病
-	knowledge.PUT("/disease/:id", UpdateDisease)  // 更新疾病
-	knowledge.GET("/diseases", GetDiseases)       // 获取疾病列表
-	knowledge.GET("/disease/:id", GetDiseaseByID) // 根据疾病 ID 获取疾病详情
-	// 基本的大分类
-	knowledge.POST("/category", CreateCategory)                            // 创建大分类
-	knowledge.GET("/categories", GetCategories)                            // 获取大分类列表
-	knowledge.GET("/category/:categoryId/diseases", GetDiseasesByCategory) // 根据大分类获取疾病列表
 
-	knowledge.GET("/disease-tree", GetDiseaseTree) // 获取疾病分类树
+	// 静态路径优先注册
+	knowledge.GET("/diseases", GetDiseases)        // 复数列表
+	knowledge.GET("/disease-tree", GetDiseaseTree) // 特殊路径
+	knowledge.GET("/categories", GetCategories)    // 复数列表
+
+	// 动态参数路径后注册
+	knowledge.POST("/disease", CreateDisease)
+	knowledge.GET("/disease/:id", GetDiseaseByID)
+	knowledge.PUT("/disease/:id", UpdateDisease)
+
+	knowledge.POST("/category", CreateCategory)
+	// knowledge.GET("/category/:id", GetCategoryByID) // 如需获取单个分类
+	knowledge.PUT("/category/:id", UpdateCategory)
+	knowledge.GET("/category/:categoryId/diseases", GetDiseasesByCategory)
 }

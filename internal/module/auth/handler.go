@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"net/http"
 	"rare_backend/internal/pkg/db"
+	"rare_backend/internal/pkg/hash"
 	"rare_backend/internal/pkg/jwt"
 
 	"github.com/gin-gonic/gin"
@@ -12,8 +13,8 @@ import (
 func login(c *gin.Context) {
 	// 获取请求参数
 	var req struct {
-		Phone        string `json:"phone" binding:"required"`
-		PasswordHash string `json:"password_hash" binding:"required"`
+		Phone    string `json:"phone" binding:"required"`
+		Password string `json:"password" binding:"required"` // 接收明文密码
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -50,8 +51,8 @@ func login(c *gin.Context) {
 		return
 	}
 
-	// 验证密码（假设密码已加密存储）
-	if req.PasswordHash != user.PasswordHash {
+	// 验证密码（使用 bcrypt 比对）
+	if !hash.CheckPassword(req.Password, user.PasswordHash) {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"code":    401,
 			"message": "手机号或密码错误",
@@ -90,7 +91,7 @@ func login(c *gin.Context) {
 			"phone":      req.Phone,
 			"avatar":     user.Avatar.String,
 			"token":      token,
-			"expires_in": int(jwt.TokenExpireDuration.Seconds()), // Token 有效期（秒）
+			"expires_in": int(jwt.TokenExpireDuration.Seconds()),
 		},
 	}
 
@@ -101,12 +102,15 @@ func login(c *gin.Context) {
 func register(c *gin.Context) {
 	// 获取请求参数
 	var req struct {
-		Phone        string `json:"phone" binding:"required"`
-		PasswordHash string `json:"password_hash" binding:"required"`
+		Phone    string `json:"phone" binding:"required"`
+		Password string `json:"password" binding:"required"` // 接收明文密码
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": "参数错误"})
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "参数错误",
+		})
 		return
 	}
 
@@ -115,12 +119,28 @@ func register(c *gin.Context) {
 	checkQuery := "SELECT COUNT(*) FROM user WHERE phone = ?"
 	err := db.MySQL.QueryRow(checkQuery, req.Phone).Scan(&count)
 	if err != nil {
-		c.JSON(500, gin.H{"error": "数据库查询失败"})
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "数据库查询失败",
+		})
 		return
 	}
 
 	if count > 0 {
-		c.JSON(400, gin.H{"error": "手机号已被注册"})
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "手机号已被注册",
+		})
+		return
+	}
+
+	// 密码哈希加密
+	hashedPassword, err := hash.HashPassword(req.Password)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "密码加密失败",
+		})
 		return
 	}
 
@@ -129,14 +149,18 @@ func register(c *gin.Context) {
 		INSERT INTO user (phone, password_hash, display_name, role, status)
 		VALUES (?, ?, CONCAT('用户', LPAD(FLOOR(RAND() * 10000), 4, '0')), 1, 1)
 	`
-	_, err = db.MySQL.Exec(insertQuery, req.Phone, req.PasswordHash)
+	_, err = db.MySQL.Exec(insertQuery, req.Phone, hashedPassword)
 	if err != nil {
-		c.JSON(500, gin.H{"error": "注册失败"})
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "注册失败",
+		})
 		return
 	}
 
 	// 返回成功响应
-	c.JSON(200, gin.H{
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
 		"message": "注册成功",
 	})
 }

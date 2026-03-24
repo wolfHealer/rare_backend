@@ -1614,3 +1614,1389 @@ func DownloadTool(c *gin.Context) {
 	// 输出文件
 	c.File(filePath)
 }
+
+// CreateDrugRequest 新增药品请求
+type CreateDrugRequest struct {
+	GenericName      string `json:"genericName"`      // 通用名
+	BrandName        string `json:"brandName"`        // 商品名
+	Indication       string `json:"indication"`       // 适应症
+	DrugType         string `json:"drugType"`         // 药品类型
+	IsInsurance      bool   `json:"isInsurance"`      // 是否医保
+	DosageForm       string `json:"dosageForm"`       // 剂型
+	Spec             string `json:"spec"`             // 规格
+	RefPrice         string `json:"refPrice"`         // 参考价格
+	HasRelief        bool   `json:"hasRelief"`        // 是否有赠药援助
+	IsLaunched       bool   `json:"isLaunched"`       // 是否国内上市
+	NeedPrescription bool   `json:"needPrescription"` // 是否需要处方
+	ManualOriginal   string `json:"manualOriginal"`   // 说明书原版链接
+	ManualPopular    string `json:"manualPopular"`    // 说明书通俗版链接
+	DiseaseValue     int    `json:"diseaseValue"`     // 疾病分类
+}
+
+// UpdateDrugRequest 更新药品请求
+type UpdateDrugRequest struct {
+	BrandName        *string `json:"brandName"`
+	Indication       *string `json:"indication"`
+	DrugType         *string `json:"drugType"`
+	IsInsurance      *bool   `json:"isInsurance"`
+	DosageForm       *string `json:"dosageForm"`
+	Spec             *string `json:"spec"`
+	RefPrice         *string `json:"refPrice"`
+	HasRelief        *bool   `json:"hasRelief"`
+	IsLaunched       *bool   `json:"isLaunched"`
+	NeedPrescription *bool   `json:"needPrescription"`
+	ManualOriginal   *string `json:"manualOriginal"`
+	ManualPopular    *string `json:"manualPopular"`
+	DiseaseValue     *int    `json:"diseaseValue"`
+}
+
+// CreateDrug 新增药品
+func CreateDrug(c *gin.Context) {
+	var req CreateDrugRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "参数错误",
+		})
+		return
+	}
+
+	// 必填字段验证
+	if req.GenericName == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "通用名不能为空",
+		})
+		return
+	}
+
+	// 验证药品类型
+	validTypes := map[string]bool{"进口": true, "国产": true, "仿制药": true}
+	if req.DrugType != "" && !validTypes[req.DrugType] {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "药品类型不合法",
+		})
+		return
+	}
+
+	// 插入数据库
+	insertQuery := `
+		INSERT INTO rare_drugs 
+		(generic_name, brand_name, indication, drug_type, is_insurance,
+		 dosage_form, spec, ref_price, has_relief, is_launched, need_prescription,
+		 manual_original, manual_popular, disease_value, is_audit, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+	`
+	now := time.Now()
+	result, err := db.MySQL.Exec(insertQuery,
+		req.GenericName, req.BrandName, req.Indication, req.DrugType,
+		boolToInt(req.IsInsurance), req.DosageForm, req.Spec, req.RefPrice,
+		boolToInt(req.HasRelief), boolToInt(req.IsLaunched), boolToInt(req.NeedPrescription),
+		req.ManualOriginal, req.ManualPopular, req.DiseaseValue, now, now,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "新增药品失败",
+		})
+		return
+	}
+
+	id, _ := result.LastInsertId()
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"message": "success",
+		"data": gin.H{
+			"id": id,
+		},
+	})
+}
+
+// UpdateDrug 更新药品
+func UpdateDrug(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "无效的药品 ID",
+		})
+		return
+	}
+
+	var req UpdateDrugRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "参数错误",
+		})
+		return
+	}
+
+	// 检查药品是否存在
+	checkQuery := "SELECT id FROM rare_drugs WHERE id = ?"
+	var exists uint
+	err = db.MySQL.QueryRow(checkQuery, id).Scan(&exists)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{
+				"code":    404,
+				"message": "药品不存在",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "查询药品失败",
+		})
+		return
+	}
+
+	// 构建动态更新语句
+	updateFields := []string{}
+	updateArgs := []interface{}{}
+
+	if req.BrandName != nil {
+		updateFields = append(updateFields, "brand_name = ?")
+		updateArgs = append(updateArgs, *req.BrandName)
+	}
+	if req.Indication != nil {
+		updateFields = append(updateFields, "indication = ?")
+		updateArgs = append(updateArgs, *req.Indication)
+	}
+	if req.DrugType != nil {
+		updateFields = append(updateFields, "drug_type = ?")
+		updateArgs = append(updateArgs, *req.DrugType)
+	}
+	if req.IsInsurance != nil {
+		updateFields = append(updateFields, "is_insurance = ?")
+		updateArgs = append(updateArgs, boolToInt(*req.IsInsurance))
+	}
+	if req.DosageForm != nil {
+		updateFields = append(updateFields, "dosage_form = ?")
+		updateArgs = append(updateArgs, *req.DosageForm)
+	}
+	if req.Spec != nil {
+		updateFields = append(updateFields, "spec = ?")
+		updateArgs = append(updateArgs, *req.Spec)
+	}
+	if req.RefPrice != nil {
+		updateFields = append(updateFields, "ref_price = ?")
+		updateArgs = append(updateArgs, *req.RefPrice)
+	}
+	if req.HasRelief != nil {
+		updateFields = append(updateFields, "has_relief = ?")
+		updateArgs = append(updateArgs, boolToInt(*req.HasRelief))
+	}
+	if req.IsLaunched != nil {
+		updateFields = append(updateFields, "is_launched = ?")
+		updateArgs = append(updateArgs, boolToInt(*req.IsLaunched))
+	}
+	if req.NeedPrescription != nil {
+		updateFields = append(updateFields, "need_prescription = ?")
+		updateArgs = append(updateArgs, boolToInt(*req.NeedPrescription))
+	}
+	if req.ManualOriginal != nil {
+		updateFields = append(updateFields, "manual_original = ?")
+		updateArgs = append(updateArgs, *req.ManualOriginal)
+	}
+	if req.ManualPopular != nil {
+		updateFields = append(updateFields, "manual_popular = ?")
+		updateArgs = append(updateArgs, *req.ManualPopular)
+	}
+	if req.DiseaseValue != nil {
+		updateFields = append(updateFields, "disease_value = ?")
+		updateArgs = append(updateArgs, *req.DiseaseValue)
+	}
+
+	if len(updateFields) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "未提供更新字段",
+		})
+		return
+	}
+
+	// 添加更新时间和 ID
+	updateFields = append(updateFields, "updated_at = ?")
+	updateArgs = append(updateArgs, time.Now())
+	updateArgs = append(updateArgs, id)
+
+	updateQuery := "UPDATE rare_drugs SET " + strings.Join(updateFields, ", ") + " WHERE id = ?"
+	_, err = db.MySQL.Exec(updateQuery, updateArgs...)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "更新药品失败",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"message": "success",
+	})
+}
+
+// DeleteDrug 删除药品（软删除）
+func DeleteDrug(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "无效的药品 ID",
+		})
+		return
+	}
+
+	// 检查药品是否存在
+	checkQuery := "SELECT id FROM rare_drugs WHERE id = ? AND is_audit = 1"
+	var exists uint
+	err = db.MySQL.QueryRow(checkQuery, id).Scan(&exists)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{
+				"code":    404,
+				"message": "药品不存在",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "查询药品失败",
+		})
+		return
+	}
+
+	// 软删除：将 is_audit 设为 0
+	deleteQuery := "UPDATE rare_drugs SET is_audit = 0, updated_at = ? WHERE id = ?"
+	_, err = db.MySQL.Exec(deleteQuery, time.Now(), id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "删除药品失败",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"message": "success",
+	})
+}
+
+// boolToInt 布尔转整数
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// CreateChannelRequest 新增渠道请求
+type CreateChannelRequest struct {
+	Name              string `json:"name"`              // 渠道名称
+	ChannelType       string `json:"channelType"`       // 渠道类型
+	Region            string `json:"region"`            // 地区
+	Address           string `json:"address"`           // 地址
+	Contact           string `json:"contact"`           // 联系方式
+	DeliveryScope     string `json:"deliveryScope"`     // 配送范围
+	DeliveryCycle     string `json:"deliveryCycle"`     // 配送周期
+	IsInsuranceSettle bool   `json:"isInsuranceSettle"` // 是否医保结算
+}
+
+// UpdateChannelRequest 更新渠道请求
+type UpdateChannelRequest struct {
+	Name              *string `json:"name"`
+	ChannelType       *string `json:"channelType"`
+	Region            *string `json:"region"`
+	Address           *string `json:"address"`
+	Contact           *string `json:"contact"`
+	DeliveryScope     *string `json:"deliveryScope"`
+	DeliveryCycle     *string `json:"deliveryCycle"`
+	IsInsuranceSettle *bool   `json:"isInsuranceSettle"`
+}
+
+// CreateChannel 新增渠道
+func CreateChannel(c *gin.Context) {
+	var req CreateChannelRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "参数错误",
+		})
+		return
+	}
+
+	// 必填字段验证
+	if req.Name == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "渠道名称不能为空",
+		})
+		return
+	}
+	if req.Region == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "地区不能为空",
+		})
+		return
+	}
+	if req.Contact == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "联系方式不能为空",
+		})
+		return
+	}
+
+	// 插入数据库
+	insertQuery := `
+		INSERT INTO drug_channels 
+		(name, channel_type, region, address, contact, 
+		 delivery_scope, delivery_cycle, is_insurance_settle, is_audit, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+	`
+	now := time.Now()
+	result, err := db.MySQL.Exec(insertQuery,
+		req.Name, req.ChannelType, req.Region, req.Address, req.Contact,
+		req.DeliveryScope, req.DeliveryCycle, boolToInt(req.IsInsuranceSettle),
+		now, now,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "新增渠道失败",
+		})
+		return
+	}
+
+	id, _ := result.LastInsertId()
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"message": "success",
+		"data": gin.H{
+			"id": id,
+		},
+	})
+}
+
+// UpdateChannel 更新渠道
+func UpdateChannel(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "无效的渠道 ID",
+		})
+		return
+	}
+
+	var req UpdateChannelRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "参数错误",
+		})
+		return
+	}
+
+	// 检查渠道是否存在
+	checkQuery := "SELECT id FROM drug_channels WHERE id = ?"
+	var exists uint
+	err = db.MySQL.QueryRow(checkQuery, id).Scan(&exists)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{
+				"code":    404,
+				"message": "渠道不存在",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "查询渠道失败",
+		})
+		return
+	}
+
+	// 构建动态更新语句
+	updateFields := []string{}
+	updateArgs := []interface{}{}
+
+	if req.Name != nil {
+		updateFields = append(updateFields, "name = ?")
+		updateArgs = append(updateArgs, *req.Name)
+	}
+	if req.ChannelType != nil {
+		updateFields = append(updateFields, "channel_type = ?")
+		updateArgs = append(updateArgs, *req.ChannelType)
+	}
+	if req.Region != nil {
+		updateFields = append(updateFields, "region = ?")
+		updateArgs = append(updateArgs, *req.Region)
+	}
+	if req.Address != nil {
+		updateFields = append(updateFields, "address = ?")
+		updateArgs = append(updateArgs, *req.Address)
+	}
+	if req.Contact != nil {
+		updateFields = append(updateFields, "contact = ?")
+		updateArgs = append(updateArgs, *req.Contact)
+	}
+	if req.DeliveryScope != nil {
+		updateFields = append(updateFields, "delivery_scope = ?")
+		updateArgs = append(updateArgs, *req.DeliveryScope)
+	}
+	if req.DeliveryCycle != nil {
+		updateFields = append(updateFields, "delivery_cycle = ?")
+		updateArgs = append(updateArgs, *req.DeliveryCycle)
+	}
+	if req.IsInsuranceSettle != nil {
+		updateFields = append(updateFields, "is_insurance_settle = ?")
+		updateArgs = append(updateArgs, boolToInt(*req.IsInsuranceSettle))
+	}
+
+	if len(updateFields) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "未提供更新字段",
+		})
+		return
+	}
+
+	// 添加更新时间和 ID
+	updateFields = append(updateFields, "updated_at = ?")
+	updateArgs = append(updateArgs, time.Now())
+	updateArgs = append(updateArgs, id)
+
+	updateQuery := "UPDATE drug_channels SET " + strings.Join(updateFields, ", ") + " WHERE id = ?"
+	_, err = db.MySQL.Exec(updateQuery, updateArgs...)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "更新渠道失败",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"message": "success",
+	})
+}
+
+// DeleteChannel 删除渠道（软删除）
+func DeleteChannel(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "无效的渠道 ID",
+		})
+		return
+	}
+
+	// 检查渠道是否存在
+	checkQuery := "SELECT id FROM drug_channels WHERE id = ? AND is_audit = 1"
+	var exists uint
+	err = db.MySQL.QueryRow(checkQuery, id).Scan(&exists)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{
+				"code":    404,
+				"message": "渠道不存在",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "查询渠道失败",
+		})
+		return
+	}
+
+	// 软删除：将 is_audit 设为 0
+	deleteQuery := "UPDATE drug_channels SET is_audit = 0, updated_at = ? WHERE id = ?"
+	_, err = db.MySQL.Exec(deleteQuery, time.Now(), id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "删除渠道失败",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"message": "success",
+	})
+}
+
+// DonationItem 赠药项目响应结构
+type DonationItem struct {
+	ID            uint   `json:"id"`
+	DrugID        uint   `json:"drugId"`
+	DiseaseValue  int    `json:"diseaseValue"`
+	Name          string `json:"name"`
+	Organizer     string `json:"organizer"`
+	Condition     string `json:"condition"`
+	Period        string `json:"period"`
+	Dosage        string `json:"dosage"`
+	ApplyForm     string `json:"applyForm"`
+	ApplyGuide    string `json:"applyGuide"`
+	MaterialList  string `json:"materialList"`
+	ProgressQuery string `json:"progressQuery"`
+}
+
+// DonationOptionsResponse 赠药筛选选项响应
+type DonationOptionsResponse struct {
+	Diseases []OptionItem `json:"diseases"`
+	Drugs    []OptionItem `json:"drugs"`
+}
+
+// CreateDonationRequest 新增赠药项目请求
+type CreateDonationRequest struct {
+	DrugID         uint   `json:"drugId"`         // 关联药品 ID
+	DiseaseValue   int    `json:"diseaseValue"`   // 疾病分类
+	Name           string `json:"name"`           // 项目名称
+	Organizer      string `json:"organizer"`      // 主办方
+	ApplyCondition string `json:"applyCondition"` // 申请条件
+	ReliefCycle    string `json:"reliefCycle"`    // 援助周期
+	DrugDosage     string `json:"drugDosage"`     // 药品剂量
+	ApplyForm      string `json:"applyForm"`      // 申请表格链接
+	ApplyGuide     string `json:"applyGuide"`     // 申请指南链接
+	MaterialList   string `json:"materialList"`   // 材料清单
+	ProgressQuery  string `json:"progressQuery"`  // 进度查询方式
+}
+
+// UpdateDonationRequest 更新赠药项目请求
+type UpdateDonationRequest struct {
+	DrugID         *uint   `json:"drugId"`
+	DiseaseValue   *int    `json:"diseaseValue"`
+	Name           *string `json:"name"`
+	Organizer      *string `json:"organizer"`
+	ApplyCondition *string `json:"applyCondition"`
+	ReliefCycle    *string `json:"reliefCycle"`
+	DrugDosage     *string `json:"drugDosage"`
+	ApplyForm      *string `json:"applyForm"`
+	ApplyGuide     *string `json:"applyGuide"`
+	MaterialList   *string `json:"materialList"`
+	ProgressQuery  *string `json:"progressQuery"`
+}
+
+// GetDonationOptions 获取赠药项目筛选选项
+func GetDonationOptions(c *gin.Context) {
+	// 获取所有不重复的疾病分类
+	diseaseQuery := "SELECT DISTINCT disease_value FROM drug_relief_projects WHERE is_audit = 1 AND disease_value != 0"
+	diseaseRows, err := db.MySQL.Query(diseaseQuery)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "查询疾病选项失败",
+		})
+		return
+	}
+	defer diseaseRows.Close()
+
+	var diseases []OptionItem
+	for diseaseRows.Next() {
+		var diseaseValue int
+		if err := diseaseRows.Scan(&diseaseValue); err != nil {
+			continue
+		}
+		diseases = append(diseases, OptionItem{
+			Label: fmt.Sprintf("疾病分类%d", diseaseValue),
+			Value: strconv.Itoa(diseaseValue),
+		})
+	}
+
+	// 获取所有药品选项
+	drugQuery := "SELECT id, generic_name, brand_name FROM rare_drugs WHERE is_audit = 1"
+	drugRows, err := db.MySQL.Query(drugQuery)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "查询药品选项失败",
+		})
+		return
+	}
+	defer drugRows.Close()
+
+	var drugs []OptionItem
+	for drugRows.Next() {
+		var drug struct {
+			ID          uint           `db:"id"`
+			GenericName string         `db:"generic_name"`
+			BrandName   sql.NullString `db:"brand_name"`
+		}
+		if err := drugRows.Scan(&drug.ID, &drug.GenericName, &drug.BrandName); err != nil {
+			continue
+		}
+		name := drug.GenericName
+		if drug.BrandName.Valid && drug.BrandName.String != "" {
+			name = drug.BrandName.String
+		}
+		drugs = append(drugs, OptionItem{
+			Label: name,
+			Value: strconv.FormatUint(uint64(drug.ID), 10),
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"message": "success",
+		"data": DonationOptionsResponse{
+			Diseases: diseases,
+			Drugs:    drugs,
+		},
+	})
+}
+
+// GetDonationDetail 获取赠药项目详情
+func GetDonationDetail(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "无效的项目 ID",
+		})
+		return
+	}
+
+	query := `
+		SELECT id, drug_id, disease_value, name, organizer, apply_condition,
+		       relief_cycle, drug_dosage, apply_form, apply_guide, material_list, progress_query,
+		       created_at, updated_at
+		FROM drug_relief_projects
+		WHERE id = ? AND is_audit = 1
+	`
+
+	var project struct {
+		ID             uint           `db:"id"`
+		DrugID         uint           `db:"drug_id"`
+		DiseaseValue   int            `db:"disease_value"`
+		Name           string         `db:"name"`
+		Organizer      string         `db:"organizer"`
+		ApplyCondition string         `db:"apply_condition"`
+		ReliefCycle    string         `db:"relief_cycle"`
+		DrugDosage     string         `db:"drug_dosage"`
+		ApplyForm      sql.NullString `db:"apply_form"`
+		ApplyGuide     sql.NullString `db:"apply_guide"`
+		MaterialList   sql.NullString `db:"material_list"`
+		ProgressQuery  sql.NullString `db:"progress_query"`
+		CreatedAt      time.Time      `db:"created_at"`
+		UpdatedAt      time.Time      `db:"updated_at"`
+	}
+
+	err = db.MySQL.QueryRow(query, id).Scan(
+		&project.ID, &project.DrugID, &project.DiseaseValue, &project.Name,
+		&project.Organizer, &project.ApplyCondition, &project.ReliefCycle,
+		&project.DrugDosage, &project.ApplyForm, &project.ApplyGuide,
+		&project.MaterialList, &project.ProgressQuery, &project.CreatedAt, &project.UpdatedAt,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{
+				"code":    404,
+				"message": "赠药项目不存在",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "查询项目详情失败",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"message": "success",
+		"data": DonationItem{
+			ID:            project.ID,
+			DrugID:        project.DrugID,
+			DiseaseValue:  project.DiseaseValue,
+			Name:          project.Name,
+			Organizer:     project.Organizer,
+			Condition:     project.ApplyCondition,
+			Period:        project.ReliefCycle,
+			Dosage:        project.DrugDosage,
+			ApplyForm:     project.ApplyForm.String,
+			ApplyGuide:    project.ApplyGuide.String,
+			MaterialList:  project.MaterialList.String,
+			ProgressQuery: project.ProgressQuery.String,
+		},
+	})
+}
+
+// CreateDonation 新增赠药项目
+func CreateDonation(c *gin.Context) {
+	var req CreateDonationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "参数错误",
+		})
+		return
+	}
+
+	// 必填字段验证
+	if req.Name == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "项目名称不能为空",
+		})
+		return
+	}
+	if req.Organizer == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "主办方不能为空",
+		})
+		return
+	}
+	if req.DrugID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "关联药品 ID 不能为空",
+		})
+		return
+	}
+
+	// 验证药品是否存在
+	checkQuery := "SELECT id FROM rare_drugs WHERE id = ? AND is_audit = 1"
+	var exists uint
+	err := db.MySQL.QueryRow(checkQuery, req.DrugID).Scan(&exists)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"code":    400,
+				"message": "关联药品不存在",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "验证药品失败",
+		})
+		return
+	}
+
+	// 插入数据库
+	insertQuery := `
+		INSERT INTO drug_relief_projects 
+		(drug_id, disease_value, name, organizer, apply_condition,
+		 relief_cycle, drug_dosage, apply_form, apply_guide, material_list, progress_query,
+		 is_audit, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+	`
+	now := time.Now()
+	result, err := db.MySQL.Exec(insertQuery,
+		req.DrugID, req.DiseaseValue, req.Name, req.Organizer, req.ApplyCondition,
+		req.ReliefCycle, req.DrugDosage, req.ApplyForm, req.ApplyGuide,
+		req.MaterialList, req.ProgressQuery, now, now,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "新增项目失败",
+		})
+		return
+	}
+
+	id, _ := result.LastInsertId()
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"message": "success",
+		"data": gin.H{
+			"id": id,
+		},
+	})
+}
+
+// UpdateDonation 更新赠药项目
+func UpdateDonation(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "无效的项目 ID",
+		})
+		return
+	}
+
+	var req UpdateDonationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "参数错误",
+		})
+		return
+	}
+
+	// 检查项目是否存在
+	checkQuery := "SELECT id FROM drug_relief_projects WHERE id = ?"
+	var exists uint
+	err = db.MySQL.QueryRow(checkQuery, id).Scan(&exists)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{
+				"code":    404,
+				"message": "项目不存在",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "查询项目失败",
+		})
+		return
+	}
+
+	// 构建动态更新语句
+	updateFields := []string{}
+	updateArgs := []interface{}{}
+
+	if req.DrugID != nil {
+		// 验证药品是否存在
+		drugCheckQuery := "SELECT id FROM rare_drugs WHERE id = ? AND is_audit = 1"
+		var drugExists uint
+		if err := db.MySQL.QueryRow(drugCheckQuery, *req.DrugID).Scan(&drugExists); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"code":    400,
+				"message": "关联药品不存在",
+			})
+			return
+		}
+		updateFields = append(updateFields, "drug_id = ?")
+		updateArgs = append(updateArgs, *req.DrugID)
+	}
+	if req.DiseaseValue != nil {
+		updateFields = append(updateFields, "disease_value = ?")
+		updateArgs = append(updateArgs, *req.DiseaseValue)
+	}
+	if req.Name != nil {
+		updateFields = append(updateFields, "name = ?")
+		updateArgs = append(updateArgs, *req.Name)
+	}
+	if req.Organizer != nil {
+		updateFields = append(updateFields, "organizer = ?")
+		updateArgs = append(updateArgs, *req.Organizer)
+	}
+	if req.ApplyCondition != nil {
+		updateFields = append(updateFields, "apply_condition = ?")
+		updateArgs = append(updateArgs, *req.ApplyCondition)
+	}
+	if req.ReliefCycle != nil {
+		updateFields = append(updateFields, "relief_cycle = ?")
+		updateArgs = append(updateArgs, *req.ReliefCycle)
+	}
+	if req.DrugDosage != nil {
+		updateFields = append(updateFields, "drug_dosage = ?")
+		updateArgs = append(updateArgs, *req.DrugDosage)
+	}
+	if req.ApplyForm != nil {
+		updateFields = append(updateFields, "apply_form = ?")
+		updateArgs = append(updateArgs, *req.ApplyForm)
+	}
+	if req.ApplyGuide != nil {
+		updateFields = append(updateFields, "apply_guide = ?")
+		updateArgs = append(updateArgs, *req.ApplyGuide)
+	}
+	if req.MaterialList != nil {
+		updateFields = append(updateFields, "material_list = ?")
+		updateArgs = append(updateArgs, *req.MaterialList)
+	}
+	if req.ProgressQuery != nil {
+		updateFields = append(updateFields, "progress_query = ?")
+		updateArgs = append(updateArgs, *req.ProgressQuery)
+	}
+
+	if len(updateFields) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "未提供更新字段",
+		})
+		return
+	}
+
+	// 添加更新时间和 ID
+	updateFields = append(updateFields, "updated_at = ?")
+	updateArgs = append(updateArgs, time.Now())
+	updateArgs = append(updateArgs, id)
+
+	updateQuery := "UPDATE drug_relief_projects SET " + strings.Join(updateFields, ", ") + " WHERE id = ?"
+	_, err = db.MySQL.Exec(updateQuery, updateArgs...)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "更新项目失败",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"message": "success",
+	})
+}
+
+// DeleteDonation 删除赠药项目（软删除）
+func DeleteDonation(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "无效的项目 ID",
+		})
+		return
+	}
+
+	// 检查项目是否存在
+	checkQuery := "SELECT id FROM drug_relief_projects WHERE id = ? AND is_audit = 1"
+	var exists uint
+	err = db.MySQL.QueryRow(checkQuery, id).Scan(&exists)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{
+				"code":    404,
+				"message": "项目不存在",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "查询项目失败",
+		})
+		return
+	}
+
+	// 软删除：将 is_audit 设为 0
+	deleteQuery := "UPDATE drug_relief_projects SET is_audit = 0, updated_at = ? WHERE id = ?"
+	_, err = db.MySQL.Exec(deleteQuery, time.Now(), id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "删除项目失败",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"message": "success",
+	})
+}
+
+// ToolItem 工具项响应结构
+type ToolItem struct {
+	ID           uint       `json:"id"`
+	Title        string     `json:"title"`
+	Description  string     `json:"description"`
+	ToolType     string     `json:"toolType"`
+	DiseaseValue int        `json:"diseaseValue"`
+	Files        []ToolFile `json:"files"`
+	UpdatedAt    string     `json:"updatedAt"`
+}
+
+// ToolFile 工具文件
+type ToolFile struct {
+	FileType    string `json:"fileType"`
+	Title       string `json:"title"`
+	DownloadUrl string `json:"downloadUrl"`
+}
+
+// ToolOptionsResponse 工具筛选选项响应
+type ToolOptionsResponse struct {
+	Diseases  []OptionItem `json:"diseases"`
+	ToolTypes []OptionItem `json:"toolTypes"`
+}
+
+// CreateToolRequest 新增工具请求
+type CreateToolRequest struct {
+	DiseaseValue        int    `json:"diseaseValue"`        // 疾病分类
+	ToolType            string `json:"toolType"`            // 工具类型
+	Name                string `json:"name"`                // 工具名称
+	RecordTemplateExcel string `json:"recordTemplateExcel"` // 记录模板 Excel 链接
+	RecordTemplateWord  string `json:"recordTemplateWord"`  // 记录模板 Word 链接
+	StoreGuidePDF       string `json:"storeGuidePdf"`       // 储存指南 PDF 链接
+	ContentIntro        string `json:"contentIntro"`        // 内容介绍
+}
+
+// UpdateToolRequest 更新工具请求
+type UpdateToolRequest struct {
+	DiseaseValue        *int    `json:"diseaseValue"`
+	ToolType            *string `json:"toolType"`
+	Name                *string `json:"name"`
+	RecordTemplateExcel *string `json:"recordTemplateExcel"`
+	RecordTemplateWord  *string `json:"recordTemplateWord"`
+	StoreGuidePDF       *string `json:"storeGuidePdf"`
+	ContentIntro        *string `json:"contentIntro"`
+}
+
+// GetToolOptions 获取工具筛选选项
+func GetToolOptions(c *gin.Context) {
+	// 获取所有不重复的疾病分类
+	diseaseQuery := "SELECT DISTINCT disease_value FROM drug_manage_tools WHERE is_audit = 1 AND disease_value != 0"
+	diseaseRows, err := db.MySQL.Query(diseaseQuery)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "查询疾病选项失败",
+		})
+		return
+	}
+	defer diseaseRows.Close()
+
+	var diseases []OptionItem
+	for diseaseRows.Next() {
+		var diseaseValue int
+		if err := diseaseRows.Scan(&diseaseValue); err != nil {
+			continue
+		}
+		diseases = append(diseases, OptionItem{
+			Label: fmt.Sprintf("疾病分类%d", diseaseValue),
+			Value: strconv.Itoa(diseaseValue),
+		})
+	}
+
+	// 获取所有工具类型选项
+	typeQuery := "SELECT DISTINCT tool_type FROM drug_manage_tools WHERE is_audit = 1 AND tool_type != ''"
+	typeRows, err := db.MySQL.Query(typeQuery)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "查询工具类型选项失败",
+		})
+		return
+	}
+	defer typeRows.Close()
+
+	var toolTypes []OptionItem
+	for typeRows.Next() {
+		var toolType string
+		if err := typeRows.Scan(&toolType); err != nil {
+			continue
+		}
+		toolTypes = append(toolTypes, OptionItem{
+			Label: toolType,
+			Value: toolType,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"message": "success",
+		"data": ToolOptionsResponse{
+			Diseases:  diseases,
+			ToolTypes: toolTypes,
+		},
+	})
+}
+
+// GetToolDetail 获取工具详情
+func GetToolDetail(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "无效的工具 ID",
+		})
+		return
+	}
+
+	query := `
+		SELECT id, disease_value, tool_type, name, record_template_excel, 
+		       record_template_word, store_guide_pdf, content_intro, updated_at
+		FROM drug_manage_tools
+		WHERE id = ? AND is_audit = 1
+	`
+
+	var tool struct {
+		ID                  uint           `db:"id"`
+		DiseaseValue        int            `db:"disease_value"`
+		ToolType            string         `db:"tool_type"`
+		Name                string         `db:"name"`
+		RecordTemplateExcel sql.NullString `db:"record_template_excel"`
+		RecordTemplateWord  sql.NullString `db:"record_template_word"`
+		StoreGuidePDF       sql.NullString `db:"store_guide_pdf"`
+		ContentIntro        string         `db:"content_intro"`
+		UpdatedAt           time.Time      `db:"updated_at"`
+	}
+
+	err = db.MySQL.QueryRow(query, id).Scan(
+		&tool.ID, &tool.DiseaseValue, &tool.ToolType, &tool.Name,
+		&tool.RecordTemplateExcel, &tool.RecordTemplateWord, &tool.StoreGuidePDF,
+		&tool.ContentIntro, &tool.UpdatedAt,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{
+				"code":    404,
+				"message": "工具不存在",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "查询工具详情失败",
+		})
+		return
+	}
+
+	// 构建文件列表
+	files := []ToolFile{}
+	if tool.RecordTemplateExcel.Valid && tool.RecordTemplateExcel.String != "" {
+		files = append(files, ToolFile{
+			FileType:    "excel",
+			Title:       tool.Name + "_用药记录模板",
+			DownloadUrl: "/api/resource/drug/tool/download/" + strconv.FormatUint(uint64(tool.ID), 10) + "?type=excel",
+		})
+	}
+	if tool.RecordTemplateWord.Valid && tool.RecordTemplateWord.String != "" {
+		files = append(files, ToolFile{
+			FileType:    "word",
+			Title:       tool.Name + "_用药记录模板",
+			DownloadUrl: "/api/resource/drug/tool/download/" + strconv.FormatUint(uint64(tool.ID), 10) + "?type=word",
+		})
+	}
+	if tool.StoreGuidePDF.Valid && tool.StoreGuidePDF.String != "" {
+		files = append(files, ToolFile{
+			FileType:    "pdf",
+			Title:       tool.Name + "_储存指南",
+			DownloadUrl: "/api/resource/drug/tool/download/" + strconv.FormatUint(uint64(tool.ID), 10) + "?type=pdf",
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"message": "success",
+		"data": ToolItem{
+			ID:           tool.ID,
+			Title:        tool.Name,
+			Description:  tool.ContentIntro,
+			ToolType:     tool.ToolType,
+			DiseaseValue: tool.DiseaseValue,
+			Files:        files,
+			UpdatedAt:    tool.UpdatedAt.Format("2006-01-02"),
+		},
+	})
+}
+
+// CreateTool 新增工具
+func CreateTool(c *gin.Context) {
+	var req CreateToolRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "参数错误",
+		})
+		return
+	}
+
+	// 必填字段验证
+	if req.Name == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "工具名称不能为空",
+		})
+		return
+	}
+	if req.ToolType == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "工具类型不能为空",
+		})
+		return
+	}
+
+	// 插入数据库
+	insertQuery := `
+		INSERT INTO drug_manage_tools 
+		(disease_value, tool_type, name, record_template_excel, record_template_word,
+		 store_guide_pdf, content_intro, is_audit, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+	`
+	now := time.Now()
+	result, err := db.MySQL.Exec(insertQuery,
+		req.DiseaseValue, req.ToolType, req.Name,
+		req.RecordTemplateExcel, req.RecordTemplateWord,
+		req.StoreGuidePDF, req.ContentIntro, now, now,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "新增工具失败",
+		})
+		return
+	}
+
+	id, _ := result.LastInsertId()
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"message": "success",
+		"data": gin.H{
+			"id": id,
+		},
+	})
+}
+
+// UpdateTool 更新工具
+func UpdateTool(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "无效的工具 ID",
+		})
+		return
+	}
+
+	var req UpdateToolRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "参数错误",
+		})
+		return
+	}
+
+	// 检查工具是否存在
+	checkQuery := "SELECT id FROM drug_manage_tools WHERE id = ?"
+	var exists uint
+	err = db.MySQL.QueryRow(checkQuery, id).Scan(&exists)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{
+				"code":    404,
+				"message": "工具不存在",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "查询工具失败",
+		})
+		return
+	}
+
+	// 构建动态更新语句
+	updateFields := []string{}
+	updateArgs := []interface{}{}
+
+	if req.DiseaseValue != nil {
+		updateFields = append(updateFields, "disease_value = ?")
+		updateArgs = append(updateArgs, *req.DiseaseValue)
+	}
+	if req.ToolType != nil {
+		updateFields = append(updateFields, "tool_type = ?")
+		updateArgs = append(updateArgs, *req.ToolType)
+	}
+	if req.Name != nil {
+		updateFields = append(updateFields, "name = ?")
+		updateArgs = append(updateArgs, *req.Name)
+	}
+	if req.RecordTemplateExcel != nil {
+		updateFields = append(updateFields, "record_template_excel = ?")
+		updateArgs = append(updateArgs, *req.RecordTemplateExcel)
+	}
+	if req.RecordTemplateWord != nil {
+		updateFields = append(updateFields, "record_template_word = ?")
+		updateArgs = append(updateArgs, *req.RecordTemplateWord)
+	}
+	if req.StoreGuidePDF != nil {
+		updateFields = append(updateFields, "store_guide_pdf = ?")
+		updateArgs = append(updateArgs, *req.StoreGuidePDF)
+	}
+	if req.ContentIntro != nil {
+		updateFields = append(updateFields, "content_intro = ?")
+		updateArgs = append(updateArgs, *req.ContentIntro)
+	}
+
+	if len(updateFields) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "未提供更新字段",
+		})
+		return
+	}
+
+	// 添加更新时间和 ID
+	updateFields = append(updateFields, "updated_at = ?")
+	updateArgs = append(updateArgs, time.Now())
+	updateArgs = append(updateArgs, id)
+
+	updateQuery := "UPDATE drug_manage_tools SET " + strings.Join(updateFields, ", ") + " WHERE id = ?"
+	_, err = db.MySQL.Exec(updateQuery, updateArgs...)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "更新工具失败",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"message": "success",
+	})
+}
+
+// DeleteTool 删除工具（软删除）
+func DeleteTool(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "无效的工具 ID",
+		})
+		return
+	}
+
+	// 检查工具是否存在
+	checkQuery := "SELECT id FROM drug_manage_tools WHERE id = ? AND is_audit = 1"
+	var exists uint
+	err = db.MySQL.QueryRow(checkQuery, id).Scan(&exists)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{
+				"code":    404,
+				"message": "工具不存在",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "查询工具失败",
+		})
+		return
+	}
+
+	// 软删除：将 is_audit 设为 0
+	deleteQuery := "UPDATE drug_manage_tools SET is_audit = 0, updated_at = ? WHERE id = ?"
+	_, err = db.MySQL.Exec(deleteQuery, time.Now(), id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "删除工具失败",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"message": "success",
+	})
+}

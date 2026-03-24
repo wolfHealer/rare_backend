@@ -417,6 +417,105 @@ func GetCategories(c *gin.Context) {
 	})
 }
 
+// UpdateCategory 更新分类
+func UpdateCategory(c *gin.Context) {
+	// 获取分类 ID
+	categoryID := c.Param("id")
+	id, err := strconv.ParseInt(categoryID, 10, 64)
+	if err != nil {
+		c.JSON(400, gin.H{
+			"code":    400,
+			"message": "无效的分类 ID",
+		})
+		return
+	}
+
+	// 定义请求结构体（支持部分字段更新）
+	var req struct {
+		Name        *string `json:"name"`
+		Description *string `json:"description"`
+		IconURL     *string `json:"icon_url"`
+		SortOrder   *int    `json:"sort_order"`
+		Status      *int    `json:"status"`
+	}
+
+	// 绑定请求参数
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{
+			"code":    400,
+			"message": "参数错误",
+		})
+		return
+	}
+
+	// 检查分类是否存在
+	var count int
+	checkQuery := "SELECT COUNT(*) FROM category WHERE id = ?"
+	err = db.MySQL.QueryRow(checkQuery, id).Scan(&count)
+	if err != nil || count == 0 {
+		c.JSON(400, gin.H{
+			"code":    400,
+			"message": "分类不存在",
+		})
+		return
+	}
+
+	// 构建动态更新 SQL
+	setClause := ""
+	args := []interface{}{}
+
+	if req.Name != nil {
+		setClause += "name = ?, "
+		args = append(args, *req.Name)
+	}
+	if req.Description != nil {
+		setClause += "description = ?, "
+		args = append(args, *req.Description)
+	}
+	if req.IconURL != nil {
+		setClause += "icon_url = ?, "
+		args = append(args, *req.IconURL)
+	}
+	if req.SortOrder != nil {
+		setClause += "sort_order = ?, "
+		args = append(args, *req.SortOrder)
+	}
+	if req.Status != nil {
+		setClause += "status = ?, "
+		args = append(args, *req.Status)
+	}
+
+	// 如果没有提供更新字段，返回错误
+	if len(setClause) == 0 {
+		c.JSON(400, gin.H{
+			"code":    400,
+			"message": "至少提供一个更新字段",
+		})
+		return
+	}
+
+	// 移除末尾逗号并拼接完整 SQL
+	setClause = setClause[:len(setClause)-2]
+	query := fmt.Sprintf("UPDATE category SET %s WHERE id = ?", setClause)
+	args = append(args, id)
+
+	// 执行更新
+	_, err = db.MySQL.Exec(query, args...)
+	if err != nil {
+		c.JSON(500, gin.H{
+			"code":    500,
+			"message": "更新分类失败",
+		})
+		return
+	}
+
+	// 返回成功响应
+	c.JSON(200, gin.H{
+		"code":    200,
+		"message": "更新成功",
+	})
+}
+
 func GetDiseasesByCategory(c *gin.Context) {
 	// 从 URL 参数中获取 categoryId
 	categoryId := c.Param("categoryId")

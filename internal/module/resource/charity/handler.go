@@ -1689,3 +1689,442 @@ func getHardcodedDiseases() []DiseaseItem {
 		{Text: "脑瘫", Value: "cerebral_palsy"},
 	}
 }
+
+// CreateProjectRequest 创建项目请求结构
+type CreateProjectRequest struct {
+	Title           string `json:"title" binding:"required"`
+	Content         string `json:"content" binding:"required"`
+	Requirements    string `json:"requirements"`
+	ReliefType      string `json:"reliefType" binding:"required"`
+	DiseaseValue    int    `json:"diseaseValue"`
+	ReliefStandard  string `json:"reliefStandard"`
+	ApplyDifficulty string `json:"applyDifficulty"`
+	ApplyDeadline   string `json:"applyDeadline"`
+	Contact         string `json:"contact"`
+	ApplyForm       string `json:"applyForm"`
+	ApplyGuide      string `json:"applyGuide"`
+	MaterialList    string `json:"materialList"`
+	Organizer       string `json:"organizer"`
+	Sort            int    `json:"sort"`
+}
+
+// CreateProject 新增救助项目
+func CreateProject(c *gin.Context) {
+	var req CreateProjectRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "参数错误",
+		})
+		return
+	}
+
+	// 参数校验
+	if req.Title == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "项目名称不能为空",
+		})
+		return
+	}
+
+	// 插入数据库
+	insertQuery := `
+		INSERT INTO relief_projects 
+		(name, apply_process, apply_condition, relief_type, disease_value,
+		 relief_standard, apply_difficulty, apply_deadline, contact,
+		 apply_form, apply_guide, material_list, organizer, sort,
+		 is_audit, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())
+	`
+	result, err := db.MySQL.Exec(insertQuery,
+		req.Title, req.Content, req.Requirements, req.ReliefType, req.DiseaseValue,
+		req.ReliefStandard, req.ApplyDifficulty, req.ApplyDeadline, req.Contact,
+		req.ApplyForm, req.ApplyGuide, req.MaterialList, req.Organizer, req.Sort)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "创建项目失败",
+		})
+		return
+	}
+
+	// 获取新增的 ID
+	id, _ := result.LastInsertId()
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"message": "创建成功",
+		"data": gin.H{
+			"id": id,
+		},
+	})
+}
+
+// UpdateProjectRequest 更新项目请求结构
+type UpdateProjectRequest struct {
+	Title           string `json:"title"`
+	Content         string `json:"content"`
+	Requirements    string `json:"requirements"`
+	ReliefType      string `json:"reliefType"`
+	DiseaseValue    int    `json:"diseaseValue"`
+	ReliefStandard  string `json:"reliefStandard"`
+	ApplyDifficulty string `json:"applyDifficulty"`
+	ApplyDeadline   string `json:"applyDeadline"`
+	Contact         string `json:"contact"`
+	ApplyForm       string `json:"applyForm"`
+	ApplyGuide      string `json:"applyGuide"`
+	MaterialList    string `json:"materialList"`
+	Organizer       string `json:"organizer"`
+	Sort            int    `json:"sort"`
+	IsAudit         int    `json:"isAudit"`
+}
+
+// UpdateProject 更新救助项目
+func UpdateProject(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "无效的项目 ID",
+		})
+		return
+	}
+
+	var req UpdateProjectRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "参数错误",
+		})
+		return
+	}
+
+	// 构建动态更新语句
+	updateFields := []string{}
+	args := []interface{}{}
+
+	if req.Title != "" {
+		updateFields = append(updateFields, "name = ?")
+		args = append(args, req.Title)
+	}
+	if req.Content != "" {
+		updateFields = append(updateFields, "apply_process = ?")
+		args = append(args, req.Content)
+	}
+	if req.Requirements != "" {
+		updateFields = append(updateFields, "apply_condition = ?")
+		args = append(args, req.Requirements)
+	}
+	if req.ReliefType != "" {
+		updateFields = append(updateFields, "relief_type = ?")
+		args = append(args, req.ReliefType)
+	}
+	if req.DiseaseValue != 0 {
+		updateFields = append(updateFields, "disease_value = ?")
+		args = append(args, req.DiseaseValue)
+	}
+	if req.ReliefStandard != "" {
+		updateFields = append(updateFields, "relief_standard = ?")
+		args = append(args, req.ReliefStandard)
+	}
+	if req.ApplyDifficulty != "" {
+		updateFields = append(updateFields, "apply_difficulty = ?")
+		args = append(args, req.ApplyDifficulty)
+	}
+	if req.ApplyDeadline != "" {
+		updateFields = append(updateFields, "apply_deadline = ?")
+		args = append(args, req.ApplyDeadline)
+	}
+	if req.Contact != "" {
+		updateFields = append(updateFields, "contact = ?")
+		args = append(args, req.Contact)
+	}
+	if req.ApplyForm != "" {
+		updateFields = append(updateFields, "apply_form = ?")
+		args = append(args, req.ApplyForm)
+	}
+	if req.ApplyGuide != "" {
+		updateFields = append(updateFields, "apply_guide = ?")
+		args = append(args, req.ApplyGuide)
+	}
+	if req.MaterialList != "" {
+		updateFields = append(updateFields, "material_list = ?")
+		args = append(args, req.MaterialList)
+	}
+	if req.Organizer != "" {
+		updateFields = append(updateFields, "organizer = ?")
+		args = append(args, req.Organizer)
+	}
+	updateFields = append(updateFields, "sort = ?")
+	args = append(args, req.Sort)
+
+	// 审核状态单独处理
+	if req.IsAudit != 0 {
+		updateFields = append(updateFields, "is_audit = ?")
+		args = append(args, req.IsAudit)
+	}
+
+	updateFields = append(updateFields, "updated_at = NOW()")
+	args = append(args, id)
+
+	updateQuery := `UPDATE relief_projects SET ` + strings.Join(updateFields, ", ") + ` WHERE id = ?`
+	_, err = db.MySQL.Exec(updateQuery, args...)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "更新项目失败",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"message": "更新成功",
+		"data":    nil,
+	})
+}
+
+// DeleteProject 删除救助项目（软删除）
+func DeleteProject(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "无效的项目 ID",
+		})
+		return
+	}
+
+	// 软删除：更新 is_audit = 0
+	updateQuery := `UPDATE relief_projects SET is_audit = 0, updated_at = NOW() WHERE id = ?`
+	_, err = db.MySQL.Exec(updateQuery, id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "删除项目失败",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"message": "删除成功",
+		"data":    nil,
+	})
+}
+
+// CreateCaseRequest 创建案例请求结构
+type CreateCaseRequest struct {
+	Title            string `json:"title" binding:"required"`
+	PatientDesc      string `json:"patientDesc" binding:"required"`
+	DiseaseValue     string `json:"diseaseValue" binding:"required"`
+	ActualRelief     string `json:"actualRelief"`
+	Experience       string `json:"experience"`
+	PitfallGuide     string `json:"pitfallGuide"`
+	CasePdf          string `json:"casePdf"`
+	MaterialTemplate string `json:"materialTemplate"`
+	ProjectID        uint   `json:"projectId"`
+	CoverUrl         string `json:"coverUrl"`
+	Sort             int    `json:"sort"`
+}
+
+// CreateCase 新增救助案例
+func CreateCase(c *gin.Context) {
+	var req CreateCaseRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "参数错误",
+		})
+		return
+	}
+
+	// 参数校验
+	if req.Title == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "案例标题不能为空",
+		})
+		return
+	}
+	if req.PatientDesc == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "患者描述不能为空",
+		})
+		return
+	}
+
+	// 插入数据库
+	insertQuery := `
+		INSERT INTO relief_cases 
+		(case_title, patient_desc, disease_value, actual_relief, experience,
+		 pitfall_guide, case_pdf, material_template, project_id, cover_url, sort,
+		 is_audit, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())
+	`
+	result, err := db.MySQL.Exec(insertQuery,
+		req.Title, req.PatientDesc, req.DiseaseValue, req.ActualRelief, req.Experience,
+		req.PitfallGuide, req.CasePdf, req.MaterialTemplate, req.ProjectID, req.CoverUrl, req.Sort)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "创建案例失败",
+		})
+		return
+	}
+
+	// 获取新增的 ID
+	id, _ := result.LastInsertId()
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"message": "创建成功",
+		"data": gin.H{
+			"id": id,
+		},
+	})
+}
+
+// UpdateCaseRequest 更新案例请求结构
+type UpdateCaseRequest struct {
+	Title            string `json:"title"`
+	PatientDesc      string `json:"patientDesc"`
+	DiseaseValue     string `json:"diseaseValue"`
+	ActualRelief     string `json:"actualRelief"`
+	Experience       string `json:"experience"`
+	PitfallGuide     string `json:"pitfallGuide"`
+	CasePdf          string `json:"casePdf"`
+	MaterialTemplate string `json:"materialTemplate"`
+	ProjectID        uint   `json:"projectId"`
+	CoverUrl         string `json:"coverUrl"`
+	Sort             int    `json:"sort"`
+	IsAudit          int    `json:"isAudit"`
+}
+
+// UpdateCase 更新救助案例
+func UpdateCase(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "无效的案例 ID",
+		})
+		return
+	}
+
+	var req UpdateCaseRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "参数错误",
+		})
+		return
+	}
+
+	// 构建动态更新语句
+	updateFields := []string{}
+	args := []interface{}{}
+
+	if req.Title != "" {
+		updateFields = append(updateFields, "case_title = ?")
+		args = append(args, req.Title)
+	}
+	if req.PatientDesc != "" {
+		updateFields = append(updateFields, "patient_desc = ?")
+		args = append(args, req.PatientDesc)
+	}
+	if req.DiseaseValue != "" {
+		updateFields = append(updateFields, "disease_value = ?")
+		args = append(args, req.DiseaseValue)
+	}
+	if req.ActualRelief != "" {
+		updateFields = append(updateFields, "actual_relief = ?")
+		args = append(args, req.ActualRelief)
+	}
+	if req.Experience != "" {
+		updateFields = append(updateFields, "experience = ?")
+		args = append(args, req.Experience)
+	}
+	if req.PitfallGuide != "" {
+		updateFields = append(updateFields, "pitfall_guide = ?")
+		args = append(args, req.PitfallGuide)
+	}
+	if req.CasePdf != "" {
+		updateFields = append(updateFields, "case_pdf = ?")
+		args = append(args, req.CasePdf)
+	}
+	if req.MaterialTemplate != "" {
+		updateFields = append(updateFields, "material_template = ?")
+		args = append(args, req.MaterialTemplate)
+	}
+	if req.ProjectID != 0 {
+		updateFields = append(updateFields, "project_id = ?")
+		args = append(args, req.ProjectID)
+	}
+	if req.CoverUrl != "" {
+		updateFields = append(updateFields, "cover_url = ?")
+		args = append(args, req.CoverUrl)
+	}
+	updateFields = append(updateFields, "sort = ?")
+	args = append(args, req.Sort)
+
+	// 审核状态单独处理
+	if req.IsAudit != 0 {
+		updateFields = append(updateFields, "is_audit = ?")
+		args = append(args, req.IsAudit)
+	}
+
+	updateFields = append(updateFields, "updated_at = NOW()")
+	args = append(args, id)
+
+	updateQuery := `UPDATE relief_cases SET ` + strings.Join(updateFields, ", ") + ` WHERE id = ?`
+	_, err = db.MySQL.Exec(updateQuery, args...)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "更新案例失败",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"message": "更新成功",
+		"data":    nil,
+	})
+}
+
+// DeleteCase 删除救助案例（软删除）
+func DeleteCase(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "无效的案例 ID",
+		})
+		return
+	}
+
+	// 软删除：更新 is_audit = 0
+	updateQuery := `UPDATE relief_cases SET is_audit = 0, updated_at = NOW() WHERE id = ?`
+	_, err = db.MySQL.Exec(updateQuery, id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "删除案例失败",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"message": "删除成功",
+		"data":    nil,
+	})
+}

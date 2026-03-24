@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"rare_backend/internal/pkg/db"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -712,4 +713,444 @@ func GetPostDetail(c *gin.Context) {
 
 	// 返回结果
 	c.JSON(http.StatusOK, response)
+}
+
+// PostOptionsResponse 帖子筛选选项响应
+type PostOptionsResponse struct {
+	Types      []OptionItem `json:"types"`
+	Diseases   []OptionItem `json:"diseases"`
+	Categories []OptionItem `json:"categories"`
+}
+
+// OptionItem 选项项
+type OptionItem struct {
+	Label string `json:"label"`
+	Value string `json:"value"`
+}
+
+// UpdatePostRequest 更新帖子请求
+type UpdatePostRequest struct {
+	Title      *string  `json:"title"`
+	Content    *string  `json:"content"`
+	Images     []string `json:"images"`
+	DiseaseID  *int64   `json:"disease_id"`
+	CategoryID *int64   `json:"category_id"`
+	Type       *string  `json:"type"`
+}
+
+// UpdateCommentRequest 更新评论请求
+type UpdateCommentRequest struct {
+	Content string `json:"content" binding:"required"`
+}
+
+// GetPostOptions 获取帖子筛选选项
+func GetPostOptions(c *gin.Context) {
+	// 帖子类型选项
+	types := []OptionItem{
+		{Label: "求助", Value: "help"},
+		{Label: "经验", Value: "experience"},
+		{Label: "情感", Value: "emotion"},
+		{Label: "资讯", Value: "info"},
+	}
+
+	// 获取疾病分类选项
+	diseaseQuery := "SELECT id, name FROM disease WHERE status = 1"
+	diseaseRows, err := db.MySQL.Query(diseaseQuery)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "查询疾病选项失败",
+		})
+		return
+	}
+	defer diseaseRows.Close()
+
+	var diseases []OptionItem
+	for diseaseRows.Next() {
+		var disease struct {
+			ID   int64  `db:"id"`
+			Name string `db:"name"`
+		}
+		if err := diseaseRows.Scan(&disease.ID, &disease.Name); err != nil {
+			continue
+		}
+		diseases = append(diseases, OptionItem{
+			Label: disease.Name,
+			Value: strconv.FormatInt(disease.ID, 10),
+		})
+	}
+
+	// 获取分类选项
+	categoryQuery := "SELECT id, name FROM post_category WHERE status = 1"
+	categoryRows, err := db.MySQL.Query(categoryQuery)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "查询分类选项失败",
+		})
+		return
+	}
+	defer categoryRows.Close()
+
+	var categories []OptionItem
+	for categoryRows.Next() {
+		var category struct {
+			ID   int64  `db:"id"`
+			Name string `db:"name"`
+		}
+		if err := categoryRows.Scan(&category.ID, &category.Name); err != nil {
+			continue
+		}
+		categories = append(categories, OptionItem{
+			Label: category.Name,
+			Value: strconv.FormatInt(category.ID, 10),
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"message": "success",
+		"data": PostOptionsResponse{
+			Types:      types,
+			Diseases:   diseases,
+			Categories: categories,
+		},
+	})
+}
+
+// UpdatePost 更新帖子
+func UpdatePost(c *gin.Context) {
+	postID := c.Param("id")
+	id, err := strconv.ParseInt(postID, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "无效的帖子 ID",
+		})
+		return
+	}
+
+	var req UpdatePostRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "参数错误",
+		})
+		return
+	}
+
+	// 检查帖子是否存在且属于当前用户
+	userID := int64(1001) // 实际应从 JWT 获取
+	checkQuery := "SELECT id, user_id FROM post WHERE id = ? AND status = 1"
+	var postUserID int64
+	err = db.MySQL.QueryRow(checkQuery, id).Scan(&postUserID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{
+				"code":    404,
+				"message": "帖子不存在",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "查询帖子失败",
+		})
+		return
+	}
+
+	// 验证权限
+	if postUserID != userID {
+		c.JSON(http.StatusForbidden, gin.H{
+			"code":    403,
+			"message": "无权限修改该帖子",
+		})
+		return
+	}
+
+	// 构建动态更新语句
+	updateFields := []string{}
+	updateArgs := []interface{}{}
+
+	if req.Title != nil {
+		updateFields = append(updateFields, "title = ?")
+		updateArgs = append(updateArgs, *req.Title)
+	}
+	if req.Content != nil {
+		updateFields = append(updateFields, "content = ?")
+		updateArgs = append(updateArgs, *req.Content)
+	}
+	if req.Images != nil {
+		imagesJSON, _ := json.Marshal(req.Images)
+		updateFields = append(updateFields, "images = ?")
+		updateArgs = append(updateArgs, string(imagesJSON))
+	}
+	if req.DiseaseID != nil {
+		updateFields = append(updateFields, "disease_id = ?")
+		updateArgs = append(updateArgs, *req.DiseaseID)
+	}
+	if req.CategoryID != nil {
+		updateFields = append(updateFields, "category_id = ?")
+		updateArgs = append(updateArgs, *req.CategoryID)
+	}
+	if req.Type != nil {
+		validTypes := map[string]bool{"help": true, "experience": true, "emotion": true, "info": true}
+		if !validTypes[*req.Type] {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"code":    400,
+				"message": "无效的帖子类型",
+			})
+			return
+		}
+		updateFields = append(updateFields, "type = ?")
+		updateArgs = append(updateArgs, *req.Type)
+	}
+
+	if len(updateFields) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "未提供更新字段",
+		})
+		return
+	}
+
+	// 添加更新时间和 ID
+	updateFields = append(updateFields, "updated_at = ?")
+	updateArgs = append(updateArgs, time.Now())
+	updateArgs = append(updateArgs, id)
+
+	updateQuery := "UPDATE post SET " + strings.Join(updateFields, ", ") + " WHERE id = ?"
+	_, err = db.MySQL.Exec(updateQuery, updateArgs...)
+	if err != nil {
+		fmt.Printf("Update post error: %v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "更新帖子失败",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"message": "success",
+	})
+}
+
+// DeletePost 删除帖子（软删除）
+func DeletePost(c *gin.Context) {
+	postID := c.Param("id")
+	id, err := strconv.ParseInt(postID, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "无效的帖子 ID",
+		})
+		return
+	}
+
+	// 检查帖子是否存在且属于当前用户
+	userID := int64(1001) // 实际应从 JWT 获取
+	checkQuery := "SELECT id, user_id FROM post WHERE id = ? AND status = 1"
+	var postUserID int64
+	err = db.MySQL.QueryRow(checkQuery, id).Scan(&postUserID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{
+				"code":    404,
+				"message": "帖子不存在",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "查询帖子失败",
+		})
+		return
+	}
+
+	// 验证权限
+	if postUserID != userID {
+		c.JSON(http.StatusForbidden, gin.H{
+			"code":    403,
+			"message": "无权限删除该帖子",
+		})
+		return
+	}
+
+	// 软删除：将 status 设为 0
+	deleteQuery := "UPDATE post SET status = 0, updated_at = ? WHERE id = ?"
+	_, err = db.MySQL.Exec(deleteQuery, time.Now(), id)
+	if err != nil {
+		fmt.Printf("Delete post error: %v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "删除帖子失败",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"message": "success",
+	})
+}
+
+// UpdateComment 更新评论
+func UpdateComment(c *gin.Context) {
+	commentID := c.Param("id")
+	id, err := strconv.ParseInt(commentID, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "无效的评论 ID",
+		})
+		return
+	}
+
+	var req UpdateCommentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "参数错误",
+		})
+		return
+	}
+
+	// 检查评论是否存在且属于当前用户
+	userID := int64(1001) // 实际应从 JWT 获取
+	checkQuery := "SELECT id, user_id FROM comment WHERE id = ? AND status = 1"
+	var commentUserID int64
+	err = db.MySQL.QueryRow(checkQuery, id).Scan(&commentUserID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{
+				"code":    404,
+				"message": "评论不存在",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "查询评论失败",
+		})
+		return
+	}
+
+	// 验证权限
+	if commentUserID != userID {
+		c.JSON(http.StatusForbidden, gin.H{
+			"code":    403,
+			"message": "无权限修改该评论",
+		})
+		return
+	}
+
+	// 更新评论内容
+	updateQuery := "UPDATE comment SET content = ?, updated_at = ? WHERE id = ?"
+	_, err = db.MySQL.Exec(updateQuery, req.Content, time.Now(), id)
+	if err != nil {
+		fmt.Printf("Update comment error: %v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "更新评论失败",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"message": "success",
+	})
+}
+
+// DeleteComment 删除评论（软删除）
+func DeleteComment(c *gin.Context) {
+	commentID := c.Param("id")
+	id, err := strconv.ParseInt(commentID, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "无效的评论 ID",
+		})
+		return
+	}
+
+	// 检查评论是否存在且属于当前用户
+	userID := int64(1001) // 实际应从 JWT 获取
+	checkQuery := "SELECT id, user_id, target_id FROM comment WHERE id = ? AND status = 1"
+	var commentUserID, postID int64
+	err = db.MySQL.QueryRow(checkQuery, id).Scan(&commentUserID, &postID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{
+				"code":    404,
+				"message": "评论不存在",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "查询评论失败",
+		})
+		return
+	}
+
+	// 验证权限
+	if commentUserID != userID {
+		c.JSON(http.StatusForbidden, gin.H{
+			"code":    403,
+			"message": "无权限删除该评论",
+		})
+		return
+	}
+
+	// 开启事务
+	tx, err := db.MySQL.Begin()
+	if err != nil {
+		fmt.Printf("Begin transaction error: %v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "开启事务失败",
+		})
+		return
+	}
+	defer tx.Rollback()
+
+	// 软删除评论
+	deleteQuery := "UPDATE comment SET status = 0, updated_at = ? WHERE id = ?"
+	_, err = tx.Exec(deleteQuery, time.Now(), id)
+	if err != nil {
+		fmt.Printf("Delete comment error: %v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "删除评论失败",
+		})
+		return
+	}
+
+	// 更新帖子的评论计数
+	_, err = tx.Exec("UPDATE post SET comment_count = comment_count - 1 WHERE id = ? AND comment_count > 0", postID)
+	if err != nil {
+		fmt.Printf("Update comment count error: %v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "更新评论计数失败",
+		})
+		return
+	}
+
+	// 提交事务
+	if err := tx.Commit(); err != nil {
+		fmt.Printf("Commit transaction error: %v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "提交事务失败",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"message": "success",
+	})
 }
