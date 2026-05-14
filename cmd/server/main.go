@@ -20,7 +20,7 @@ func main() {
 		"http://localhost:5173",
 		"http://127.0.0.1:5174",
 	} // 允许的前端域名
-	config.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
+	config.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"}
 	config.AllowHeaders = []string{"Origin", "Content-Type", "Authorization"}
 	r.Use(cors.New(config))
 
@@ -31,9 +31,9 @@ func main() {
 	if err := db.InitMySQL("root:love1357hb@tcp(127.0.0.1:3306)/rare_backend?parseTime=true"); err != nil {
 		log.Fatalf("mysql init: %v", err)
 	}
-	if err := db.InitMongo("mongodb://localhost:27017"); err != nil {
-		log.Fatalf("mongo init: %v", err)
-	}
+	// if err := db.InitMongo("mongodb://localhost:27017"); err != nil {
+	// 	log.Fatalf("mongo init: %v", err)
+	// }
 
 	// 5️. 启动服务
 	if err := r.Run(":8080"); err != nil {

@@ -1,14 +1,13 @@
 package resource
 
 import (
-	"rare_backend/internal/module/resource/medical" // 引入子模块
-
-	"rare_backend/internal/module/resource/drug"  // 未来扩展
-	"rare_backend/internal/module/resource/rehab" // 未来扩展
+	"rare_backend/internal/module/resource/charity"
+	"rare_backend/internal/module/resource/drug"
+	"rare_backend/internal/module/resource/medical"
+	"rare_backend/internal/module/resource/medicare"
+	"rare_backend/internal/module/resource/rehab"
 
 	"github.com/gin-gonic/gin"
-
-	"rare_backend/internal/module/resource/charity" // 未来扩展
 )
 
 func SetupResourceRoutes(r *gin.RouterGroup) {
@@ -20,5 +19,6 @@ func SetupResourceRoutes(r *gin.RouterGroup) {
 	charity.SetupCharityRoutes(resource) // 未来扩展
 	drug.SetupDrugRoutes(resource)       // 未来扩展
 	rehab.SetupRehabRoutes(resource)
+	medicare.SetupMedicareRoutes(resource)
 
 }

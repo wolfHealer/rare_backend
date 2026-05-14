@@ -6,4 +6,17 @@ func Register(r *gin.RouterGroup) {
 	auth := r.Group("/auth")
 	auth.POST("/login", login)
 	auth.POST("/register", register)
+
+	// 新增用户管理路由
+	users := r.Group("/system/users")
+	users.POST("", CreateUser)
+	users.GET("", GetUserList)       // GET /api/auth/users?page=1&pageSize=10&keyword=xxx
+	users.GET("/:id", GetUserByID)   // GET /api/auth/users/123
+	users.PUT("/:id", UpdateUser)    // PUT /api/users/123
+	users.DELETE("/:id", DeleteUser) // DELETE /api/users/123
+
+	// 新增：专门更新角色的接口，适配前端 PATCH /system/users/${id}/role
+	users.PATCH("/:id/role", UpdateUserRole)
+	// 新增：重置密码接口
+	users.POST("/:id/reset-password", ResetPassword)
 }

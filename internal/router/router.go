@@ -2,8 +2,9 @@ package router
 
 import (
 	"rare_backend/internal/module/auth"
+	post "rare_backend/internal/module/community"
 	"rare_backend/internal/module/knowledge"
-	"rare_backend/internal/module/post"
+	"rare_backend/internal/module/region"
 	"rare_backend/internal/module/resource"
 
 	"github.com/gin-gonic/gin"
@@ -29,4 +30,6 @@ func Register(r *gin.Engine) {
 
 	//======= resource模块 =====
 	resource.SetupResourceRoutes(api)
+
+	region.Register(api)
 }

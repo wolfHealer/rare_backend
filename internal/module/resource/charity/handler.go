@@ -12,19 +12,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// ProjectItem 救助项目项响应结构
-type ProjectItem struct {
-	ID         uint   `json:"id"`
-	Title      string `json:"title"`
-	Org        string `json:"org"`
-	Desc       string `json:"desc"`
-	Status     string `json:"status"`
-	Type       string `json:"type"`
-	Disease    int    `json:"disease"`
-	Amount     string `json:"amount"`
-	Difficulty string `json:"difficulty"`
-}
-
 // ProjectListResponse 列表响应结构
 type ProjectListResponse struct {
 	List     []ProjectItem `json:"list"`
@@ -33,46 +20,59 @@ type ProjectListResponse struct {
 	PageSize int           `json:"pageSize"`
 }
 
-// ProjectDetailResponse 详情响应结构
-type ProjectDetailResponse struct {
-	ID           uint       `json:"id"`
-	Title        string     `json:"title"`
-	Content      string     `json:"content"`
-	Requirements string     `json:"requirements"`
-	Deadline     *time.Time `json:"deadline"`
-	Contact      string     `json:"contact"`
-	ApplyForm    string     `json:"applyForm"`
-	ApplyGuide   string     `json:"applyGuide"`
-	MaterialList string     `json:"materialList"`
-}
+// ProjectItem 救助项目项响应结构
+type ProjectItem struct {
+	ID              uint   `json:"id"`
+	Name            string `json:"name"`
+	Organizer       string `json:"organizer"`
+	ApplyCondition  string `json:"applyCondition"`
+	Status          string `json:"status"`
+	ReliefType      string `json:"reliefType"`
+	DiseaseIds      []int  `json:"diseaseIds"`
+	ReliefStandard  string `json:"reliefStandard"`
+	ApplyDifficulty string `json:"applyDifficulty"`
 
-// ProjectOptionsResponse 筛选选项响应
-type ProjectOptionsResponse struct {
-	Types        []OptionItem `json:"types"`
-	Diseases     []OptionItem `json:"diseases"`
-	Amounts      []OptionItem `json:"amounts"`
-	Difficulties []OptionItem `json:"difficulties"`
-}
-
-// OptionItem 选项项
-type OptionItem struct {
-	Text  string `json:"text"`
-	Value string `json:"value"`
+	// 新增字段
+	AuditStatus  int    `json:"auditStatus"`  // 审核状态：0待审核 1已通过 2已驳回
+	RejectReason string `json:"rejectReason"` // 驳回原因
+	Sort         int    `json:"sort"`         // 排序权重
+	UpdatedAt    string `json:"updatedAt"`    // 更新时间，格式化为字符串
 }
 
 // ListProjects 获取救助项目列表
 func ListProjects(c *gin.Context) {
 	// 获取请求参数
-	typeFilter := c.DefaultQuery("type", "")
-	diseaseStr := c.DefaultQuery("disease", "")
-	difficulty := c.DefaultQuery("difficulty", "")
+	typeFilter := c.DefaultQuery("reliefType", "")
+	diseaseStr := c.DefaultQuery("diseaseId", "")
+	difficulty := c.DefaultQuery("applyDifficulty", "")
+
+	// 【新增】获取 auditStatus 和 keyword 参数
+	auditStatusStr := c.DefaultQuery("auditStatus", "")
+	keyword := c.DefaultQuery("keyword", "")
+
 	pageStr := c.DefaultQuery("page", "1")
 	pageSizeStr := c.DefaultQuery("pageSize", "10")
 
-	disease := 0
+	diseaseID := 0
 	if diseaseStr != "" {
-		disease, _ = strconv.Atoi(diseaseStr)
+		diseaseID, _ = strconv.Atoi(diseaseStr)
 	}
+
+	// 【新增】处理 auditStatus 参数
+	var auditStatus int
+	if auditStatusStr != "" {
+		status, err := strconv.Atoi(auditStatusStr)
+		if err == nil && (status == 0 || status == 1 || status == 2) {
+			auditStatus = status
+		} else {
+			// 如果传递了非法状态值，可以选择返回错误或者忽略该筛选条件
+			// 这里选择忽略，保持默认行为（或者你可以返回 400 错误）
+			auditStatus = -1 // 标记为无效，后续不加入 WHERE 条件
+		}
+	} else {
+		auditStatus = -1 // 未传递，不筛选
+	}
+
 	page, _ := strconv.Atoi(pageStr)
 	pageSize, _ := strconv.Atoi(pageSizeStr)
 	if page < 1 {
@@ -84,24 +84,45 @@ func ListProjects(c *gin.Context) {
 	offset := (page - 1) * pageSize
 
 	// 构建查询条件
-	whereClause := "WHERE is_audit = 1"
+	whereClause := "WHERE 1=1"
 	args := []interface{}{}
 
+	// 【修改】处理 audit_status 筛选
+	// 如果前端传了 auditStatus，则按传入值筛选；否则，默认只展示已通过的 (audit_status = 1)
+	// 注意：如果是管理后台接口，通常希望默认看到所有状态，或者由前端明确控制。
+	// 这里保留原逻辑的“安全默认值”：如果没有指定 auditStatus，默认只看通过的。
+	if auditStatus != -1 {
+		whereClause += " AND p.audit_status = ?"
+		args = append(args, auditStatus)
+	} else {
+		// 如果业务要求默认只看通过的，保留此行；如果希望默认看全部，注释掉此行
+		whereClause += " AND p.audit_status = 1"
+	}
+
 	if typeFilter != "" {
-		whereClause += " AND relief_type = ?"
+		whereClause += " AND p.relief_type = ?"
 		args = append(args, typeFilter)
 	}
-	if disease != 0 {
-		whereClause += " AND disease_value = ?"
-		args = append(args, disease)
+
+	if diseaseID != 0 {
+		whereClause += " AND EXISTS (SELECT 1 FROM relief_project_disease_rel r WHERE r.project_id = p.id AND r.disease_id = ?)"
+		args = append(args, diseaseID)
 	}
+
 	if difficulty != "" {
-		whereClause += " AND apply_difficulty = ?"
+		whereClause += " AND p.apply_difficulty = ?"
 		args = append(args, difficulty)
 	}
 
+	// 【新增】处理 keyword 关键字筛选 (匹配 name 和 organizer)
+	if keyword != "" {
+		likeKeyword := "%" + keyword + "%"
+		whereClause += " AND (p.name LIKE ? OR p.organizer LIKE ?)"
+		args = append(args, likeKeyword, likeKeyword)
+	}
+
 	// 查询总数
-	countQuery := "SELECT COUNT(*) FROM relief_projects " + whereClause
+	countQuery := "SELECT COUNT(*) FROM relief_project p " + whereClause
 	var total int64
 	err := db.MySQL.QueryRow(countQuery, args...).Scan(&total)
 	if err != nil {
@@ -112,13 +133,13 @@ func ListProjects(c *gin.Context) {
 		return
 	}
 
-	// 查询列表
+	// 查询列表基础信息
 	listQuery := `
-		SELECT id, name, organizer, apply_condition, is_audit,
-		       relief_type, disease_value, relief_standard, apply_difficulty
-		FROM relief_projects
+		SELECT p.id, p.name, p.organizer, p.apply_condition, p.audit_status, p.reject_reason, p.sort,
+		       p.relief_type, p.relief_standard, p.apply_difficulty, p.updated_at
+		FROM relief_project p
 		` + whereClause + `
-		ORDER BY sort DESC, id DESC
+		ORDER BY p.sort DESC, p.id DESC
 		LIMIT ? OFFSET ?
 	`
 	args = append(args, pageSize, offset)
@@ -136,41 +157,77 @@ func ListProjects(c *gin.Context) {
 	var list []ProjectItem
 	for rows.Next() {
 		var project struct {
-			ID              uint   `db:"id"`
-			Name            string `db:"name"`
-			Organizer       string `db:"organizer"`
-			ApplyCondition  string `db:"apply_condition"`
-			IsAudit         int    `db:"is_audit"`
-			ReliefType      string `db:"relief_type"`
-			DiseaseValue    int    `db:"disease_value"`
-			ReliefStandard  string `db:"relief_standard"`
-			ApplyDifficulty string `db:"apply_difficulty"`
+			ID              uint      `db:"id"`
+			Name            string    `db:"name"`
+			Organizer       string    `db:"organizer"`
+			ApplyCondition  string    `db:"apply_condition"`
+			AuditStatus     int       `db:"audit_status"`
+			RejectReason    string    `db:"reject_reason"`
+			Sort            int       `db:"sort"`
+			ReliefType      string    `db:"relief_type"`
+			ReliefStandard  string    `db:"relief_standard"`
+			ApplyDifficulty string    `db:"apply_difficulty"`
+			UpdatedAt       time.Time `db:"updated_at"` // 建议改为 time.Time 以便格式化
 		}
+
+		// 扫描数据
 		if err := rows.Scan(
 			&project.ID, &project.Name, &project.Organizer, &project.ApplyCondition,
-			&project.IsAudit, &project.ReliefType, &project.DiseaseValue,
-			&project.ReliefStandard, &project.ApplyDifficulty,
+			&project.AuditStatus, &project.RejectReason, &project.Sort,
+			&project.ReliefType, &project.ReliefStandard, &project.ApplyDifficulty,
+			&project.UpdatedAt,
 		); err != nil {
 			continue
 		}
 
-		// 转换状态
-		status := "closed"
-		if project.IsAudit == 1 {
-			status = "open"
+		// 转换状态显示文本
+		statusText := "closed"
+		if project.AuditStatus == 1 {
+			statusText = "open"
+		} else if project.AuditStatus == 0 {
+			statusText = "pending"
+		} else if project.AuditStatus == 2 {
+			statusText = "rejected"
 		}
 
+		// 查询该项目关联的疾病ID列表
+		var diseaseIds []int
+		relRows, err := db.MySQL.Query("SELECT disease_id FROM relief_project_disease_rel WHERE project_id = ?", project.ID)
+		if err == nil {
+			for relRows.Next() {
+				var did int
+				if err := relRows.Scan(&did); err == nil {
+					diseaseIds = append(diseaseIds, did)
+				}
+			}
+			relRows.Close()
+		}
+		if diseaseIds == nil {
+			diseaseIds = []int{}
+		}
+
+		// 格式化更新时间
+		updatedAtStr := project.UpdatedAt.Format("2006-01-02T15:04:05Z")
+
 		list = append(list, ProjectItem{
-			ID:         project.ID,
-			Title:      project.Name,
-			Org:        project.Organizer,
-			Desc:       project.ApplyCondition,
-			Status:     status,
-			Type:       project.ReliefType,
-			Disease:    project.DiseaseValue,
-			Amount:     project.ReliefStandard,
-			Difficulty: project.ApplyDifficulty,
+			ID:              project.ID,
+			Name:            project.Name,
+			Organizer:       project.Organizer,
+			ApplyCondition:  project.ApplyCondition,
+			Status:          statusText,
+			ReliefType:      project.ReliefType,
+			DiseaseIds:      diseaseIds,
+			ReliefStandard:  project.ReliefStandard,
+			ApplyDifficulty: project.ApplyDifficulty,
+			AuditStatus:     project.AuditStatus,
+			RejectReason:    project.RejectReason,
+			Sort:            project.Sort,
+			UpdatedAt:       updatedAtStr,
 		})
+	}
+
+	if list == nil {
+		list = []ProjectItem{}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -185,6 +242,19 @@ func ListProjects(c *gin.Context) {
 	})
 }
 
+// ProjectDiseaseItem 项目关联疾病项
+type ProjectDiseaseItem struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
+
+// ProjectDiseaseDetail 项目关联疾病详情结构
+type ProjectDiseaseDetail struct {
+	ID    int    `json:"id"`
+	Name  string `json:"name"`
+	Alias string `json:"alias"`
+}
+
 // GetProjectDetail 获取项目详情
 func GetProjectDetail(c *gin.Context) {
 	idStr := c.Param("id")
@@ -197,29 +267,45 @@ func GetProjectDetail(c *gin.Context) {
 		return
 	}
 
+	// 1. 查询项目基础信息
+	// 【修复】去掉了多余的 '}'
 	query := `
-		SELECT id, name, apply_process, apply_condition, apply_deadline,
-		       contact, apply_form, apply_guide, material_list
-		FROM relief_projects
-		WHERE id = ? AND is_audit = 1
+		SELECT p.id, p.name, p.apply_process, p.apply_condition, p.apply_deadline,
+		       p.contact_phone, p.contact_url, p.apply_form, p.apply_guide, p.material_list,
+			   p.relief_type, p.relief_standard, p.apply_difficulty, p.organizer,
+			   p.created_at, p.updated_at, p.sort, p.audit_status, p.reject_reason
+		FROM relief_project p
+		WHERE p.id = ?
 	`
 
 	var project struct {
-		ID             uint       `db:"id"`
-		Name           string     `db:"name"`
-		ApplyProcess   string     `db:"apply_process"`
-		ApplyCondition string     `db:"apply_condition"`
-		ApplyDeadline  *time.Time `db:"apply_deadline"`
-		Contact        string     `db:"contact"`
-		ApplyForm      string     `db:"apply_form"`
-		ApplyGuide     string     `db:"apply_guide"`
-		MaterialList   string     `db:"material_list"`
+		ID              uint       `db:"id"`
+		Name            string     `db:"name"`
+		ApplyProcess    string     `db:"apply_process"`
+		ApplyCondition  string     `db:"apply_condition"`
+		ApplyDeadline   *time.Time `db:"apply_deadline"`
+		ContactPhone    string     `db:"contact_phone"`
+		ContactUrl      string     `db:"contact_url"` // 注意：结构体字段名需与 JSON tag 或数据库列对应，这里保持 ContactUrl
+		ApplyForm       string     `db:"apply_form"`
+		ApplyGuide      string     `db:"apply_guide"`
+		MaterialList    string     `db:"material_list"`
+		ReliefType      string     `db:"relief_type"`
+		ReliefStandard  string     `db:"relief_standard"`
+		ApplyDifficulty string     `db:"apply_difficulty"`
+		Organizer       string     `db:"organizer"`
+		CreatedAt       time.Time  `db:"created_at"`
+		UpdatedAt       time.Time  `db:"updated_at"`
+		Sort            int        `db:"sort"`
+		AuditStatus     int        `db:"audit_status"`
+		RejectReason    string     `db:"reject_reason"`
 	}
 
 	err = db.MySQL.QueryRow(query, id).Scan(
 		&project.ID, &project.Name, &project.ApplyProcess, &project.ApplyCondition,
-		&project.ApplyDeadline, &project.Contact, &project.ApplyForm,
-		&project.ApplyGuide, &project.MaterialList,
+		&project.ApplyDeadline, &project.ContactPhone, &project.ContactUrl,
+		&project.ApplyForm, &project.ApplyGuide, &project.MaterialList,
+		&project.ReliefType, &project.ReliefStandard, &project.ApplyDifficulty, &project.Organizer,
+		&project.CreatedAt, &project.UpdatedAt, &project.Sort, &project.AuditStatus, &project.RejectReason,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -229,231 +315,480 @@ func GetProjectDetail(c *gin.Context) {
 			})
 			return
 		}
+		// 【调试建议】如果依然报错，可以打印具体错误日志
+		// log.Printf("GetProjectDetail Query Error: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    500,
-			"message": "查询项目详情失败",
+			"message": "查询项目详情失败: " + err.Error(),
+		})
+		return
+	}
+
+	// 2. 查询该项目关联的疾病ID列表和详细信息
+	diseaseQuery := `
+		SELECT d.id, d.name, d.alias 
+		FROM relief_project_disease_rel r
+		INNER JOIN disease d ON r.disease_id = d.id
+		WHERE r.project_id = ?
+	`
+
+	rows, err := db.MySQL.Query(diseaseQuery, id)
+	if err != nil {
+		// 记录错误但不中断主流程，疾病列表返回空
+		// log.Printf("GetProjectDetail Disease Query Error: %v", err)
+		rows = nil
+	}
+
+	var diseaseIds []int
+	var diseases []ProjectDiseaseDetail
+
+	if rows != nil {
+		defer rows.Close()
+		for rows.Next() {
+			var d struct {
+				ID    int    `db:"id"`
+				Name  string `db:"name"`
+				Alias string `db:"alias"`
+			}
+			if err := rows.Scan(&d.ID, &d.Name, &d.Alias); err == nil {
+				diseaseIds = append(diseaseIds, d.ID)
+				diseases = append(diseases, ProjectDiseaseDetail{
+					ID:    d.ID,
+					Name:  d.Name,
+					Alias: d.Alias,
+				})
+			}
+		}
+	}
+
+	// 确保切片不为 nil
+	if diseaseIds == nil {
+		diseaseIds = []int{}
+	}
+	if diseases == nil {
+		diseases = []ProjectDiseaseDetail{}
+	}
+
+	// 3. 构造返回数据
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"message": "success",
+		"data": gin.H{
+			"id":              project.ID,
+			"name":            project.Name,
+			"applyProcess":    project.ApplyProcess,
+			"applyCondition":  project.ApplyCondition,
+			"applyDeadline":   project.ApplyDeadline,
+			"contactPhone":    project.ContactPhone,
+			"contactUrl":      project.ContactUrl, // 对应前端期望的 contactUrl
+			"applyForm":       project.ApplyForm,
+			"applyGuide":      project.ApplyGuide,
+			"materialList":    project.MaterialList,
+			"reliefType":      project.ReliefType,
+			"reliefStandard":  project.ReliefStandard,
+			"applyDifficulty": project.ApplyDifficulty,
+			"organizer":       project.Organizer,
+			"diseaseIds":      diseaseIds,
+			"diseases":        diseases,
+			"createdAt":       project.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			"updatedAt":       project.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+			"sort":            project.Sort,
+			"auditStatus":     project.AuditStatus,
+			"rejectReason":    project.RejectReason,
+		},
+	})
+}
+
+// CreateProjectRequest 创建项目请求结构
+type CreateProjectRequest struct {
+	Name            string  `json:"name" binding:"required"`
+	ApplyProcess    string  `json:"applyProcess" binding:"required"` // apply_process
+	ApplyCondition  string  `json:"applyCondition"`                  // apply_condition
+	ReliefType      string  `json:"reliefType" binding:"required"`
+	DiseaseIDs      []int   `json:"diseaseIds"`
+	ReliefStandard  string  `json:"reliefStandard"`
+	ApplyDifficulty string  `json:"applyDifficulty"`
+	ApplyDeadline   *string `json:"applyDeadline"`
+	ContactPhone    string  `json:"contactPhone"`
+	ContactURL      string  `json:"contactUrl"`
+	ApplyForm       string  `json:"applyForm"`
+	ApplyGuide      string  `json:"applyGuide"`
+	MaterialList    string  `json:"materialList"`
+	Organizer       string  `json:"organizer"`
+	Sort            int     `json:"sort"`
+}
+
+// CreateProject 新增救助项目
+func CreateProject(c *gin.Context) {
+	var req CreateProjectRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "参数错误: " + err.Error(),
+		})
+		return
+	}
+
+	// 开启事务
+	tx, err := db.MySQL.Begin()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "数据库事务启动失败",
+		})
+		return
+	}
+	defer tx.Rollback()
+
+	// 插入主表
+	insertQuery := `
+		INSERT INTO relief_project 
+		(name, apply_process, apply_condition, relief_type,
+		 relief_standard, apply_difficulty, apply_deadline, contact_phone, contact_url,
+		 apply_form, apply_guide, material_list, organizer, sort,
+		 audit_status, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())
+	`
+
+	var deadline interface{}
+	if req.ApplyDeadline != nil && *req.ApplyDeadline != "" {
+		deadline = *req.ApplyDeadline
+	} else {
+		deadline = nil
+	}
+
+	result, err := tx.Exec(insertQuery,
+		req.Name, req.ApplyProcess, req.ApplyCondition, req.ReliefType,
+		req.ReliefStandard, req.ApplyDifficulty, deadline, req.ContactPhone, req.ContactURL,
+		req.ApplyForm, req.ApplyGuide, req.MaterialList, req.Organizer, req.Sort)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "创建项目失败",
+		})
+		return
+	}
+
+	projectID, err := result.LastInsertId()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "获取项目ID失败",
+		})
+		return
+	}
+
+	// 插入疾病关联
+	if len(req.DiseaseIDs) > 0 {
+		relQuery := "INSERT INTO relief_project_disease_rel (project_id, disease_id) VALUES (?, ?)"
+		for _, did := range req.DiseaseIDs {
+			if did > 0 {
+				_, err := tx.Exec(relQuery, projectID, did)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{
+						"code":    500,
+						"message": "关联疾病失败",
+					})
+					return
+				}
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "事务提交失败",
 		})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"code":    200,
-		"message": "success",
-		"data": ProjectDetailResponse{
-			ID:           project.ID,
-			Title:        project.Name,
-			Content:      project.ApplyProcess,
-			Requirements: project.ApplyCondition,
-			Deadline:     project.ApplyDeadline,
-			Contact:      project.Contact,
-			ApplyForm:    project.ApplyForm,
-			ApplyGuide:   project.ApplyGuide,
-			MaterialList: project.MaterialList,
+		"message": "创建成功",
+		"data": gin.H{
+			"id": projectID,
 		},
 	})
 }
 
-// GetFilters 获取筛选选项
-func GetFilters(c *gin.Context) {
-	data := ProjectOptionsResponse{
-		Types: []OptionItem{
-			{Text: "医疗费用救助", Value: "medical"},
-			{Text: "生活补助", Value: "living"},
-			{Text: "康复补贴", Value: "rehab"},
-			{Text: "药品救助", Value: "drug"},
-		},
-		Diseases: []OptionItem{
-			{Text: "渐冻症", Value: "als"},
-			{Text: "血友病", Value: "hemophilia"},
-			{Text: "罕见病", Value: "rare"},
-		},
-		Amounts: []OptionItem{
-			{Text: "1-5 万", Value: "1w-5w"},
-			{Text: "5-10 万", Value: "5w-10w"},
-			{Text: "10 万以上", Value: "10w+"},
-		},
-		Difficulties: []OptionItem{
-			{Text: "简单", Value: "easy"},
-			{Text: "中等", Value: "medium"},
-			{Text: "复杂", Value: "hard"},
-		},
+// UpdateProjectRequest 更新项目请求结构
+type UpdateProjectRequest struct {
+	Name            string  `json:"name"`
+	ApplyProcess    string  `json:"applyProcess"`
+	ApplyCondition  string  `json:"applyCondition"`
+	ReliefType      string  `json:"reliefType"` // 标准字段
+	Type            string  `json:"type"`       // 【新增】兼容前端可能传的 type 字段
+	DiseaseIDs      []int   `json:"diseaseIds"`
+	ReliefStandard  string  `json:"reliefStandard"`
+	ApplyDifficulty string  `json:"applyDifficulty"`
+	ApplyDeadline   *string `json:"applyDeadline"`
+	ContactPhone    string  `json:"contactPhone"`
+	ContactURL      string  `json:"contactUrl"`
+	ApplyForm       string  `json:"applyForm"`
+	ApplyGuide      string  `json:"applyGuide"`
+	MaterialList    string  `json:"materialList"`
+	Organizer       string  `json:"organizer"`
+	Sort            *int    `json:"sort"`
+	AuditStatus     *int    `json:"auditStatus"`
+	RejectReason    *string `json:"rejectReason"` // 【新增】驳回原因
+}
+
+// UpdateProject 更新救助项目
+func UpdateProject(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "无效的项目 ID",
+		})
+		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code":    200,
-		"message": "success",
-		"data":    data,
-	})
-}
-
-// PolicyItem 政策项响应结构
-// PolicyItem 政策项响应结构
-type PolicyItem struct {
-	ID          uint   `json:"id"`
-	Title       string `json:"title"`
-	Region      string `json:"region"`
-	RegionCode  string `json:"regionCode"`
-	Date        string `json:"date"`
-	PublishDate string `json:"publishDate"`
-	Summary     string `json:"summary"`
-	Category    string `json:"category"`
-	FileUrl     string `json:"fileUrl"`
-}
-
-// PolicyListResponse 政策列表响应结构
-type PolicyListResponse struct {
-	List     []PolicyItem `json:"list"`
-	Total    int64        `json:"total"`
-	Page     int          `json:"page"`
-	PageSize int          `json:"pageSize"`
-}
-
-// RelatedPolicy 相关政策项
-type RelatedPolicy struct {
-	ID    uint   `json:"id"`
-	Title string `json:"title"`
-}
-
-// PolicyDetailResponse 政策详情响应结构
-type PolicyDetailResponse struct {
-	ID              uint            `json:"id"`
-	Title           string          `json:"title"`
-	Region          string          `json:"region"`
-	RegionCode      string          `json:"regionCode"`
-	PublishDate     string          `json:"publishDate"`
-	Category        string          `json:"category"`
-	Content         string          `json:"content"`
-	FileUrl         string          `json:"fileUrl"`
-	RelatedPolicies []RelatedPolicy `json:"relatedPolicies"`
-}
-
-// GetPolicyList 获取医保政策列表
-func GetPolicyList(c *gin.Context) {
-	// 获取请求参数
-	region := c.DefaultQuery("region", "")
-	diseaseStr := c.DefaultQuery("disease", "")
-	pageStr := c.DefaultQuery("page", "1")
-	pageSizeStr := c.DefaultQuery("pageSize", "10")
-
-	disease := 0
-	if diseaseStr != "" {
-		disease, _ = strconv.Atoi(diseaseStr)
+	var req UpdateProjectRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "参数错误: " + err.Error(),
+		})
+		return
 	}
-	page, _ := strconv.Atoi(pageStr)
-	pageSize, _ := strconv.Atoi(pageSizeStr)
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 || pageSize > 100 {
-		pageSize = 10
-	}
-	offset := (page - 1) * pageSize
 
-	// 构建查询条件
-	whereClause := "WHERE is_audit = 1"
+	// 【兼容处理】如果前端传了 type 但没传 reliefType，使用 type 的值
+	if req.ReliefType == "" && req.Type != "" {
+		req.ReliefType = req.Type
+	}
+
+	tx, err := db.MySQL.Begin()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "数据库事务启动失败",
+		})
+		return
+	}
+	defer tx.Rollback()
+
+	// 构建动态更新语句
+	updateFields := []string{}
 	args := []interface{}{}
 
-	if region != "" {
-		whereClause += " AND region = ?"
-		args = append(args, region)
+	if req.Name != "" {
+		updateFields = append(updateFields, "name = ?")
+		args = append(args, req.Name)
 	}
-	if disease != 0 {
-		whereClause += " AND disease_value = ?"
-		args = append(args, disease)
+	if req.ApplyProcess != "" {
+		updateFields = append(updateFields, "apply_process = ?")
+		args = append(args, req.ApplyProcess)
+	}
+	if req.ApplyCondition != "" {
+		updateFields = append(updateFields, "apply_condition = ?")
+		args = append(args, req.ApplyCondition)
+	}
+	if req.ReliefType != "" {
+		updateFields = append(updateFields, "relief_type = ?")
+		args = append(args, req.ReliefType)
+	}
+	if req.ReliefStandard != "" {
+		updateFields = append(updateFields, "relief_standard = ?")
+		args = append(args, req.ReliefStandard)
+	}
+	if req.ApplyDifficulty != "" {
+		updateFields = append(updateFields, "apply_difficulty = ?")
+		args = append(args, req.ApplyDifficulty)
 	}
 
-	// 查询总数
-	countQuery := "SELECT COUNT(*) FROM medical_insurance_policies " + whereClause
-	var total int64
-	err := db.MySQL.QueryRow(countQuery, args...).Scan(&total)
-	if err != nil {
+	// 【修复】处理 apply_deadline 格式问题
+	// 数据库字段类型为 DATE，需要确保传入的值格式为 YYYY-MM-DD
+	if req.ApplyDeadline != nil {
+		deadlineStr := *req.ApplyDeadline
+		// 如果字符串包含 'T'，说明是 ISO 8601 格式，截取日期部分
+		if strings.Contains(deadlineStr, "T") {
+			parts := strings.Split(deadlineStr, "T")
+			deadlineStr = parts[0]
+		}
+		// 可选：进一步验证格式是否为 YYYY-MM-DD，这里简单处理直接传入
+		updateFields = append(updateFields, "apply_deadline = ?")
+		args = append(args, deadlineStr)
+	}
+
+	if req.ContactPhone != "" {
+		updateFields = append(updateFields, "contact_phone = ?")
+		args = append(args, req.ContactPhone)
+	}
+	if req.ContactURL != "" {
+		updateFields = append(updateFields, "contact_url = ?")
+		args = append(args, req.ContactURL)
+	}
+	if req.ApplyForm != "" {
+		updateFields = append(updateFields, "apply_form = ?")
+		args = append(args, req.ApplyForm)
+	}
+	if req.ApplyGuide != "" {
+		updateFields = append(updateFields, "apply_guide = ?")
+		args = append(args, req.ApplyGuide)
+	}
+	if req.MaterialList != "" {
+		updateFields = append(updateFields, "material_list = ?")
+		args = append(args, req.MaterialList)
+	}
+	if req.Organizer != "" {
+		updateFields = append(updateFields, "organizer = ?")
+		args = append(args, req.Organizer)
+	}
+	if req.Sort != nil {
+		updateFields = append(updateFields, "sort = ?")
+		args = append(args, *req.Sort)
+	}
+	if req.AuditStatus != nil {
+		updateFields = append(updateFields, "audit_status = ?")
+		args = append(args, *req.AuditStatus)
+	}
+	// 【新增】处理 RejectReason 更新
+	if req.RejectReason != nil {
+		updateFields = append(updateFields, "reject_reason = ?")
+		args = append(args, *req.RejectReason)
+	}
+
+	if len(updateFields) > 0 {
+		updateFields = append(updateFields, "updated_at = NOW()")
+		args = append(args, id)
+
+		updateQuery := `UPDATE relief_project SET ` + strings.Join(updateFields, ", ") + ` WHERE id = ?`
+		_, err = tx.Exec(updateQuery, args...)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"code":    500,
+				"message": "更新项目失败: " + err.Error(),
+			})
+			return
+		}
+	}
+
+	// 处理疾病关联更新
+	if req.DiseaseIDs != nil {
+		// 1. 删除旧关联
+		_, err := tx.Exec("DELETE FROM relief_project_disease_rel WHERE project_id = ?", id)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"code":    500,
+				"message": "清理旧疾病关联失败",
+			})
+			return
+		}
+
+		// 2. 插入新关联
+		if len(req.DiseaseIDs) > 0 {
+			relQuery := "INSERT INTO relief_project_disease_rel (project_id, disease_id) VALUES (?, ?)"
+			for _, did := range req.DiseaseIDs {
+				if did > 0 {
+					_, err := tx.Exec(relQuery, id, did)
+					if err != nil {
+						c.JSON(http.StatusInternalServerError, gin.H{
+							"code":    500,
+							"message": "关联疾病失败",
+						})
+						return
+					}
+				}
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    500,
-			"message": "查询总数失败",
+			"message": "事务提交失败",
 		})
 		return
-	}
-
-	// 查询列表
-	listQuery := `
-		SELECT id, disease_value, region, policy_title, policy_original,
-		       popular_interpret, is_update, created_at
-		FROM medical_insurance_policies
-		` + whereClause + `
-		ORDER BY is_update DESC, created_at DESC
-		LIMIT ? OFFSET ?
-	`
-	args = append(args, pageSize, offset)
-
-	rows, err := db.MySQL.Query(listQuery, args...)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "查询列表失败",
-		})
-		return
-	}
-	defer rows.Close()
-
-	var list []PolicyItem
-	for rows.Next() {
-		var policy struct {
-			ID               uint      `db:"id"`
-			DiseaseValue     int       `db:"disease_value"`
-			Region           string    `db:"region"`
-			PolicyTitle      string    `db:"policy_title"`
-			PolicyOriginal   string    `db:"policy_original"`
-			PopularInterpret string    `db:"popular_interpret"`
-			IsUpdate         int       `db:"is_update"`
-			CreatedAt        time.Time `db:"created_at"`
-		}
-		if err := rows.Scan(
-			&policy.ID, &policy.DiseaseValue, &policy.Region, &policy.PolicyTitle,
-			&policy.PolicyOriginal, &policy.PopularInterpret, &policy.IsUpdate, &policy.CreatedAt,
-		); err != nil {
-			continue
-		}
-
-		// 数据转换
-		list = append(list, PolicyItem{
-			ID:          policy.ID,
-			Title:       policy.PolicyTitle,
-			Region:      policy.Region,
-			RegionCode:  convertRegionToCode(policy.Region),
-			Date:        policy.CreatedAt.Format("2006-01"),
-			PublishDate: policy.CreatedAt.Format("2006-01-02T15:04:05Z"),
-			Summary:     truncateSummary(policy.PopularInterpret, 50),
-			Category:    convertDiseaseToCategory(policy.DiseaseValue),
-			FileUrl:     policy.PolicyOriginal,
-		})
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"code":    200,
-		"message": "success",
-		"data": PolicyListResponse{
-			List:     list,
-			Total:    total,
-			Page:     page,
-			PageSize: pageSize,
-		},
+		"message": "更新成功",
+		"data":    nil,
 	})
 }
 
-// convertDiseaseToCategory 疾病值转分类
-func convertDiseaseToCategory(diseaseValue int) string {
-	// 根据实际 disease_options 表数据调整映射关系
-	categoryMap := map[int]string{
-		1: "医保报销",
-		2: "门诊特殊病",
-		3: "大病保险",
-		4: "医疗救助",
-		5: "药品保障",
+// DeleteProject 删除救助项目（真删除/物理删除）
+func DeleteProject(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "无效的项目 ID",
+		})
+		return
 	}
-	if category, ok := categoryMap[diseaseValue]; ok {
-		return category
+
+	// 开启事务，确保主表和关联表数据同时删除
+	tx, err := db.MySQL.Begin()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "数据库事务启动失败",
+		})
+		return
 	}
-	return "其他政策"
+	defer tx.Rollback()
+
+	// 1. 先删除关联表中的数据 (relief_project_disease_rel)
+	// 注意：如果外键设置了 ON DELETE CASCADE，这一步可以省略，但显式删除更安全
+	_, err = tx.Exec("DELETE FROM relief_project_disease_rel WHERE project_id = ?", id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "清理项目疾病关联失败",
+		})
+		return
+	}
+
+	// 2. 删除主表数据 (relief_project)
+	deleteQuery := `DELETE FROM relief_project WHERE id = ?`
+	result, err := tx.Exec(deleteQuery, id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "删除项目失败: " + err.Error(),
+		})
+		return
+	}
+
+	// 检查是否真的删除了记录
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "获取删除结果失败",
+		})
+		return
+	}
+
+	if rowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{
+			"code":    404,
+			"message": "项目不存在",
+		})
+		return
+	}
+
+	// 提交事务
+	if err := tx.Commit(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "事务提交失败",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"message": "删除成功",
+		"data":    nil,
+	})
 }
 
 // truncateSummary 截断摘要文本
@@ -469,338 +804,30 @@ func truncateSummary(text string, maxLen int) string {
 	return string(runes[:maxLen]) + "..."
 }
 
-// GetPolicyDetail 获取政策详情
-// GetPolicyDetail 获取政策详情
-func GetPolicyDetail(c *gin.Context) {
-	idStr := c.Param("id")
-	id, err := strconv.ParseUint(idStr, 10, 32)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "无效的政策 ID",
-		})
-		return
-	}
-
-	// 查询政策详情
-	query := `
-		SELECT id, disease_value, region, policy_title, policy_original,
-		       popular_interpret, is_update, created_at, updated_at
-		FROM medical_insurance_policies
-		WHERE id = ? AND is_audit = 1
-	`
-
-	var policy struct {
-		ID               uint      `db:"id"`
-		DiseaseValue     int       `db:"disease_value"`
-		Region           string    `db:"region"`
-		PolicyTitle      string    `db:"policy_title"`
-		PolicyOriginal   string    `db:"policy_original"`
-		PopularInterpret string    `db:"popular_interpret"`
-		IsUpdate         int       `db:"is_update"`
-		CreatedAt        time.Time `db:"created_at"`
-		UpdatedAt        time.Time `db:"updated_at"`
-	}
-
-	err = db.MySQL.QueryRow(query, id).Scan(
-		&policy.ID, &policy.DiseaseValue, &policy.Region, &policy.PolicyTitle,
-		&policy.PolicyOriginal, &policy.PopularInterpret, &policy.IsUpdate,
-		&policy.CreatedAt, &policy.UpdatedAt,
-	)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			c.JSON(http.StatusNotFound, gin.H{
-				"code":    404,
-				"message": "政策不存在",
-			})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "查询政策详情失败",
-		})
-		return
-	}
-
-	// 查询相关政策（同地区或同疾病的其他政策）
-	relatedQuery := `
-		SELECT id, policy_title 
-		FROM medical_insurance_policies 
-		WHERE is_audit = 1 
-		  AND id != ? 
-		  AND (region = ? OR disease_value = ?)
-		ORDER BY is_update DESC, created_at DESC 
-		LIMIT 5
-	`
-	relatedRows, err := db.MySQL.Query(relatedQuery, policy.ID, policy.Region, policy.DiseaseValue)
-	if err != nil {
-		// 相关政策查询失败不影响主流程，记录日志即可
-		relatedRows = nil
-	}
-
-	var relatedPolicies []RelatedPolicy
-	if relatedRows != nil {
-		defer relatedRows.Close()
-		for relatedRows.Next() {
-			var related struct {
-				ID    uint   `db:"id"`
-				Title string `db:"policy_title"`
-			}
-			if err := relatedRows.Scan(&related.ID, &related.Title); err != nil {
-				continue
-			}
-			relatedPolicies = append(relatedPolicies, RelatedPolicy{
-				ID:    related.ID,
-				Title: related.Title,
-			})
-		}
-	}
-
-	// 确保数组不为 null
-	if relatedPolicies == nil {
-		relatedPolicies = []RelatedPolicy{}
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"code":    200,
-		"message": "success",
-		"data": PolicyDetailResponse{
-			ID:              policy.ID,
-			Title:           policy.PolicyTitle,
-			Region:          policy.Region,
-			RegionCode:      convertRegionToCode(policy.Region),
-			PublishDate:     policy.CreatedAt.Format("2006-01-02T15:04:05Z"),
-			Category:        convertDiseaseToCategory(policy.DiseaseValue),
-			Content:         policy.PopularInterpret,
-			FileUrl:         policy.PolicyOriginal,
-			RelatedPolicies: relatedPolicies,
-		},
-	})
-}
-
-// RegionItem 地区选项项
-type RegionItem struct {
-	Text  string `json:"text"`
-	Value string `json:"value"`
-}
-
-// RegionResponse 地区选项响应结构
-type RegionResponse struct {
-	Regions []RegionItem `json:"regions"`
-}
-
-// GetRegions 获取地区筛选选项
-func GetRegions(c *gin.Context) {
-	// 方案一：从数据库动态查询地区（推荐）
-	query := `
-		SELECT DISTINCT region 
-		FROM medical_insurance_policies 
-		WHERE is_audit = 1 
-		ORDER BY region ASC
-	`
-
-	rows, err := db.MySQL.Query(query)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "查询地区选项失败",
-		})
-		return
-	}
-	defer rows.Close()
-
-	var regions []RegionItem
-	for rows.Next() {
-		var region string
-		if err := rows.Scan(&region); err != nil {
-			continue
-		}
-		regions = append(regions, RegionItem{
-			Text:  region,
-			Value: convertRegionToCode(region),
-		})
-	}
-
-	// 确保全国选项在前
-	regions = sortRegions(regions)
-
-	c.JSON(http.StatusOK, gin.H{
-		"code":    200,
-		"message": "success",
-		"data": RegionResponse{
-			Regions: regions,
-		},
-	})
-}
-
-// convertRegionToCode 地区名称转地区代码
-func convertRegionToCode(region string) string {
-	regionMap := map[string]string{
-		"全国": "all",
-		"北京": "bj",
-		"上海": "sh",
-		"广东": "gd",
-		"广州": "gz",
-		"深圳": "sz",
-		"浙江": "zj",
-		"江苏": "js",
-		"四川": "sc",
-		"湖北": "hb",
-		"山东": "sd",
-		"河南": "hn",
-		"福建": "fj",
-		"湖南": "hun",
-		"安徽": "ah",
-		"辽宁": "ln",
-		"陕西": "sx",
-		"重庆": "cq",
-		"天津": "tj",
-	}
-	if code, ok := regionMap[region]; ok {
-		return code
-	}
-	// 默认返回拼音首字母或其他标识
-	return "other"
-}
-
-// sortRegions 排序地区，确保全国在前
-func sortRegions(regions []RegionItem) []RegionItem {
-	if len(regions) == 0 {
-		return regions
-	}
-
-	// 查找全国选项
-	var nationalIndex = -1
-	for i, r := range regions {
-		if r.Text == "全国" || r.Value == "all" {
-			nationalIndex = i
-			break
-		}
-	}
-
-	// 如果全国不在第一位，将其移动到第一位
-	if nationalIndex > 0 {
-		national := regions[nationalIndex]
-		regions = append(regions[:nationalIndex], regions[nationalIndex+1:]...)
-		regions = append([]RegionItem{national}, regions...)
-	}
-
-	return regions
-}
-
-// MaterialItem 资料项
-type MaterialItem struct {
-	Name       string `json:"name"`
-	Type       string `json:"type"`
-	URL        string `json:"url"`
-	Size       string `json:"size"`
-	UpdateTime string `json:"updateTime"`
-}
-
-// MaterialResponse 资料响应结构
-type MaterialResponse struct {
-	Materials []MaterialItem `json:"materials"`
-}
-
-// DownloadMaterials 下载资料（数据库查询版本）
-func DownloadMaterials(c *gin.Context) {
-	// 获取请求参数
-	materialType := c.DefaultQuery("type", "")
-
-	// 构建查询条件
-	whereClause := "WHERE is_audit = 1"
-	args := []interface{}{}
-
-	if materialType != "" {
-		// 根据类型映射到对应字段
-		typeFieldMap := map[string]string{
-			"flowchart": "reimburse_process",
-			"guide":     "popular_interpret",
-			"template":  "remote_apply_template",
-			"checklist": "reimburse_material",
-		}
-		if field, ok := typeFieldMap[materialType]; ok {
-			whereClause += " AND " + field + " != ''"
-		}
-	}
-
-	// 查询资料
-	query := `
-		SELECT DISTINCT 
-			CASE 
-				WHEN reimburse_process != '' THEN 'flowchart'
-				WHEN remote_apply_template != '' THEN 'template'
-				WHEN reimburse_material != '' THEN 'checklist'
-			END AS type,
-			CASE 
-				WHEN reimburse_process != '' THEN '医保报销流程图解'
-				WHEN remote_apply_template != '' THEN '异地就医备案模板'
-				WHEN reimburse_material != '' THEN '报销材料清单说明'
-			END AS name,
-			CASE 
-				WHEN reimburse_process != '' THEN reimburse_process
-				WHEN remote_apply_template != '' THEN remote_apply_template
-				WHEN reimburse_material != '' THEN reimburse_material
-			END AS url,
-			updated_at
-		FROM medical_insurance_policies 
-		` + whereClause + `
-		ORDER BY updated_at DESC
-	`
-
-	rows, err := db.MySQL.Query(query, args...)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "查询资料失败",
-		})
-		return
-	}
-	defer rows.Close()
-
-	var materials []MaterialItem
-	for rows.Next() {
-		var material struct {
-			Type       string    `db:"type"`
-			Name       string    `db:"name"`
-			URL        string    `db:"url"`
-			UpdateTime time.Time `db:"updated_at"`
-		}
-		if err := rows.Scan(&material.Type, &material.Name, &material.URL, &material.UpdateTime); err != nil {
-			continue
-		}
-		materials = append(materials, MaterialItem{
-			Name:       material.Name,
-			Type:       material.Type,
-			URL:        material.URL,
-			Size:       "未知", // 数据库未存储文件大小，可后续扩展
-			UpdateTime: material.UpdateTime.Format("2006-01-02T15:04:05Z"),
-		})
-	}
-
-	// 确保数组不为 null
-	if materials == nil {
-		materials = []MaterialItem{}
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"code":    200,
-		"message": "success",
-		"data": MaterialResponse{
-			Materials: materials,
-		},
-	})
-}
-
-// ChannelItem 求助渠道项
+// ChannelItem 求助渠道项 (修改后以匹配期望返回值)
 type ChannelItem struct {
-	ID           uint   `json:"id"`
-	Name         string `json:"name"`
-	Desc         string `json:"desc"`
-	Type         string `json:"type"`
-	ContactValue string `json:"contactValue"`
-	ServiceTime  string `json:"serviceTime"`
-	Available    bool   `json:"available"`
+	ID                   uint    `json:"id"`
+	ChannelType          string  `json:"channelType"`
+	Name                 string  `json:"name"`
+	ApplyCondition       string  `json:"applyCondition"`
+	ResponseTime         string  `json:"responseTime"`
+	ContactPhone         string  `json:"contactPhone"`
+	ContactUrl           string  `json:"contactUrl"`
+	HelpLetterTemplate   string  `json:"helpLetterTemplate"`
+	CrowdfundingTemplate string  `json:"crowdfundingTemplate"`
+	AuditStatus          int     `json:"auditStatus"`
+	RejectReason         *string `json:"rejectReason"` // 使用指针以支持 null
+	Sort                 int     `json:"sort"`
+	CreatedAt            string  `json:"createdAt"`
+	UpdatedAt            string  `json:"updatedAt"`
+}
+
+// ChannelListResponse 渠道列表响应结构
+type ChannelListResponse struct {
+	List     []ChannelItem `json:"list"`
+	Total    int64         `json:"total"`
+	Page     int           `json:"page"`     // 如果不需要分页信息可注释掉
+	PageSize int           `json:"pageSize"` // 如果不需要分页信息可注释掉
 }
 
 // ChannelResponse 渠道响应结构
@@ -808,256 +835,15 @@ type ChannelResponse struct {
 	Channels []ChannelItem `json:"channels"`
 }
 
-// TemplateItem 模板项
-type TemplateItem struct {
-	Name       string `json:"name"`
-	Type       string `json:"type"`
-	URL        string `json:"url"`
-	Size       string `json:"size"`
-	UpdateTime string `json:"updateTime"`
-}
-
-// TemplateResponse 模板响应结构
-type TemplateResponse struct {
-	Templates []TemplateItem `json:"templates"`
-}
-
-// SubmitHelpRequest 提交求助请求体
-type SubmitHelpRequest struct {
-	ChannelID   uint   `json:"channelId"`
-	Name        string `json:"name"`
-	Phone       string `json:"phone"`
-	Type        string `json:"type"`
-	Description string `json:"description"`
-}
-
-// SubmitHelpResponse 提交求助响应结构
-type SubmitHelpResponse struct {
-	RequestID            string `json:"requestId"`
-	Status               string `json:"status"`
-	ExpectedResponseTime string `json:"expectedResponseTime"`
-}
-
-// GetChannels 获取求助渠道列表
-func GetChannels(c *gin.Context) {
-	// 获取请求参数
-	channelType := c.DefaultQuery("type", "")
-
-	// 构建查询条件
-	whereClause := "WHERE is_audit = 1"
-	args := []interface{}{}
-
-	if channelType != "" {
-		whereClause += " AND channel_type = ?"
-		args = append(args, channelType)
-	}
-
-	// 查询渠道列表
-	query := `
-		SELECT id, channel_type, name, apply_condition, response_time, contact
-		FROM help_channels 
-		` + whereClause + `
-		ORDER BY sort DESC, id ASC
-	`
-
-	rows, err := db.MySQL.Query(query, args...)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "查询渠道列表失败",
-		})
-		return
-	}
-	defer rows.Close()
-
-	var channels []ChannelItem
-	for rows.Next() {
-		var channel struct {
-			ID             uint   `db:"id"`
-			ChannelType    string `db:"channel_type"`
-			Name           string `db:"name"`
-			ApplyCondition string `db:"apply_condition"`
-			ResponseTime   string `db:"response_time"`
-			Contact        string `db:"contact"`
-		}
-		if err := rows.Scan(
-			&channel.ID, &channel.ChannelType, &channel.Name,
-			&channel.ApplyCondition, &channel.ResponseTime, &channel.Contact,
-		); err != nil {
-			continue
-		}
-
-		// 转换渠道类型
-		channelType := convertChannelType(channel.ChannelType)
-
-		// 提取联系方式
-		contactValue := extractContactValue(channel.Contact, channelType)
-
-		channels = append(channels, ChannelItem{
-			ID:           channel.ID,
-			Name:         channel.Name,
-			Desc:         "响应时间：" + channel.ResponseTime,
-			Type:         channelType,
-			ContactValue: contactValue,
-			ServiceTime:  channel.ResponseTime,
-			Available:    true,
-		})
-	}
-
-	// 确保数组不为 null
-	if channels == nil {
-		channels = []ChannelItem{}
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"code":    200,
-		"message": "success",
-		"data": ChannelResponse{
-			Channels: channels,
-		},
-	})
-}
-
-// GetTemplates 获取求助模板列表
-func GetTemplates(c *gin.Context) {
-	// 获取请求参数
-	templateType := c.DefaultQuery("type", "")
-
-	// 定义模板配置
-	allTemplates := []TemplateItem{
-		{
-			Name:       "通用求助信模板",
-			Type:       "letter",
-			URL:        "https://example.com/templates/help_letter.docx",
-			Size:       "50KB",
-			UpdateTime: "2024-01-10T00:00:00Z",
-		},
-		{
-			Name:       "医疗救助申请表",
-			Type:       "application",
-			URL:        "https://example.com/templates/medical_application.docx",
-			Size:       "80KB",
-			UpdateTime: "2024-01-10T00:00:00Z",
-		},
-		{
-			Name:       "紧急求助信模板",
-			Type:       "urgent_letter",
-			URL:        "https://example.com/templates/urgent_letter.docx",
-			Size:       "45KB",
-			UpdateTime: "2024-01-08T00:00:00Z",
-		},
-		{
-			Name:       "众筹求助模板",
-			Type:       "crowdfunding",
-			URL:        "https://example.com/templates/crowdfunding.docx",
-			Size:       "60KB",
-			UpdateTime: "2024-01-05T00:00:00Z",
-		},
-	}
-
-	// 根据类型筛选
-	var templates []TemplateItem
-	if templateType != "" {
-		for _, t := range allTemplates {
-			if t.Type == templateType {
-				templates = append(templates, t)
-			}
-		}
-	} else {
-		templates = allTemplates
-	}
-
-	// 确保数组不为 null
-	if templates == nil {
-		templates = []TemplateItem{}
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"code":    200,
-		"message": "success",
-		"data": TemplateResponse{
-			Templates: templates,
-		},
-	})
-}
-
-// SubmitHelp 提交求助请求
-func SubmitHelp(c *gin.Context) {
-	var req SubmitHelpRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "请求参数错误",
-		})
-		return
-	}
-
-	// 参数校验
-	if req.ChannelID == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "渠道 ID 不能为空",
-		})
-		return
-	}
-	if req.Name == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "姓名不能为空",
-		})
-		return
-	}
-	if req.Phone == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "手机号不能为空",
-		})
-		return
-	}
-	if req.Description == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "求助描述不能为空",
-		})
-		return
-	}
-
-	// 生成请求 ID
-	requestID := generateRequestID()
-
-	// 插入求助请求记录（需要创建 help_requests 表）
-	insertQuery := `
-		INSERT INTO help_requests 
-		(channel_id, name, phone, help_type, description, request_id, status, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, 'submitted', NOW())
-	`
-	_, err := db.MySQL.Exec(insertQuery,
-		req.ChannelID, req.Name, req.Phone, req.Type, req.Description, requestID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "提交求助请求失败",
-		})
-		return
-	}
-
-	// 计算预期响应时间（根据渠道类型）
-	expectedTime := calculateExpectedResponseTime(req.ChannelID)
-
-	c.JSON(http.StatusOK, gin.H{
-		"code":    200,
-		"message": "求助请求已提交",
-		"data": SubmitHelpResponse{
-			RequestID:            requestID,
-			Status:               "submitted",
-			ExpectedResponseTime: expectedTime,
-		},
-	})
-}
-
 // convertChannelType 转换渠道类型
 func convertChannelType(channelType string) string {
 	typeMap := map[string]string{
+		"emergency_help":     "urgent",       // 紧急求助
+		"crowdfunding":       "crowdfunding", // 众筹求助
+		"charity_consulting": "consulting",   // 公益咨询 (新增映射)
+		"founding_support":   "foundation",   // 基金会支持 (新增映射，注意拼写是否为 foundation_support)
+
+		// 兼容旧的中文映射，如果数据库中存的是中文
 		"紧急求助": "urgent",
 		"众筹求助": "crowdfunding",
 		"医疗救助": "medical",
@@ -1067,27 +853,6 @@ func convertChannelType(channelType string) string {
 		return t
 	}
 	return "other"
-}
-
-// extractContactValue 提取联系方式
-func extractContactValue(contact string, channelType string) string {
-	// 根据渠道类型提取对应的联系方式
-	// 这里简化处理，实际可根据 contact 字段格式解析
-	return contact
-}
-
-// generateRequestID 生成请求 ID
-func generateRequestID() string {
-	timestamp := time.Now().Format("20060102150405")
-	// 可添加随机数或 UUID 确保唯一性
-	return "REQ" + timestamp
-}
-
-// calculateExpectedResponseTime 计算预期响应时间
-func calculateExpectedResponseTime(channelID uint) string {
-	// 根据渠道 ID 查询响应时间，这里简化处理
-	// 实际可查询 help_channels 表的 response_time 字段
-	return time.Now().Add(24 * time.Hour).Format("2006-01-02T15:04:05Z")
 }
 
 // ChannelTemplate 渠道模板项
@@ -1113,6 +878,163 @@ type ChannelDetailResponse struct {
 	UpdateTime     string            `json:"updateTime"`
 }
 
+// GetChannels 获取求助渠道列表
+func GetChannels(c *gin.Context) {
+	// 1. 获取请求参数
+	channelType := c.DefaultQuery("channelType", "")
+	keyword := c.DefaultQuery("keyword", "")
+
+	// 【新增】获取 auditStatus 参数
+	auditStatusStr := c.DefaultQuery("auditStatus", "")
+
+	pageStr := c.DefaultQuery("page", "1")
+	pageSizeStr := c.DefaultQuery("pageSize", "10")
+
+	// 2. 处理分页参数
+	page, _ := strconv.Atoi(pageStr)
+	pageSize, _ := strconv.Atoi(pageSizeStr)
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 10
+	}
+	offset := (page - 1) * pageSize
+
+	// 3. 构建查询条件
+	whereClause := "WHERE 1=1"
+	args := []interface{}{}
+
+	// 【新增】处理 auditStatus 筛选逻辑
+	if auditStatusStr != "" {
+		// 如果前端传了 auditStatus，尝试解析并加入筛选
+		status, err := strconv.Atoi(auditStatusStr)
+		if err == nil && (status == 0 || status == 1 || status == 2) {
+			whereClause += " AND audit_status = ?"
+			args = append(args, status)
+		}
+		// 如果传入非法值，可以选择忽略该筛选条件（即查询所有状态），或者返回错误。
+		// 这里选择忽略非法值，不加入 WHERE 条件，相当于查询所有状态。
+	} else {
+		// 【重要】如果前端没传 auditStatus，默认只展示已通过的 (audit_status = 1)
+		// 如果业务需求是默认展示所有，请注释掉下面这一行
+		whereClause += " AND audit_status = 1"
+	}
+
+	if channelType != "" {
+		whereClause += " AND channel_type = ?"
+		args = append(args, channelType)
+	}
+
+	if keyword != "" {
+		whereClause += " AND name LIKE ?"
+		args = append(args, "%"+keyword+"%")
+	}
+
+	// 4. 查询总数
+	countQuery := "SELECT COUNT(*) FROM help_channel " + whereClause
+	var total int64
+	err := db.MySQL.QueryRow(countQuery, args...).Scan(&total)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "查询总数失败",
+		})
+		return
+	}
+
+	// 5. 查询列表数据 (查询所有必要字段)
+	listQuery := `
+		SELECT id, channel_type, name, apply_condition, response_time, 
+		       contact_phone, contact_url, help_letter_template, crowdfunding_template,
+		       audit_status, reject_reason, sort, created_at, updated_at
+		FROM help_channel 
+		` + whereClause + `
+		ORDER BY sort DESC, id ASC
+		LIMIT ? OFFSET ?
+	`
+	args = append(args, pageSize, offset)
+
+	rows, err := db.MySQL.Query(listQuery, args...)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "查询渠道列表失败",
+		})
+		return
+	}
+	defer rows.Close()
+
+	var channels []ChannelItem
+	for rows.Next() {
+		var channel struct {
+			ID                   uint           `db:"id"`
+			ChannelType          string         `db:"channel_type"`
+			Name                 string         `db:"name"`
+			ApplyCondition       string         `db:"apply_condition"`
+			ResponseTime         string         `db:"response_time"`
+			ContactPhone         string         `db:"contact_phone"`
+			ContactUrl           string         `db:"contact_url"`
+			HelpLetterTemplate   string         `db:"help_letter_template"`
+			CrowdfundingTemplate string         `db:"crowdfunding_template"`
+			AuditStatus          int            `db:"audit_status"`
+			RejectReason         sql.NullString `db:"reject_reason"`
+			Sort                 int            `db:"sort"`
+			CreatedAt            time.Time      `db:"created_at"`
+			UpdatedAt            time.Time      `db:"updated_at"`
+		}
+
+		if err := rows.Scan(
+			&channel.ID, &channel.ChannelType, &channel.Name,
+			&channel.ApplyCondition, &channel.ResponseTime, &channel.ContactPhone, &channel.ContactUrl,
+			&channel.HelpLetterTemplate, &channel.CrowdfundingTemplate,
+			&channel.AuditStatus, &channel.RejectReason, &channel.Sort,
+			&channel.CreatedAt, &channel.UpdatedAt,
+		); err != nil {
+			continue
+		}
+
+		// 处理 RejectReason null 值
+		var rejectReasonPtr *string
+		if channel.RejectReason.Valid {
+			rejectReasonPtr = &channel.RejectReason.String
+		}
+
+		channels = append(channels, ChannelItem{
+			ID:                   channel.ID,
+			ChannelType:          channel.ChannelType,
+			Name:                 channel.Name,
+			ApplyCondition:       channel.ApplyCondition,
+			ResponseTime:         channel.ResponseTime,
+			ContactPhone:         channel.ContactPhone,
+			ContactUrl:           channel.ContactUrl,
+			HelpLetterTemplate:   channel.HelpLetterTemplate,
+			CrowdfundingTemplate: channel.CrowdfundingTemplate,
+			AuditStatus:          channel.AuditStatus,
+			RejectReason:         rejectReasonPtr,
+			Sort:                 channel.Sort,
+			CreatedAt:            channel.CreatedAt.Format("2006-01-02 15:04:05"),
+			UpdatedAt:            channel.UpdatedAt.Format("2006-01-02 15:04:05"),
+		})
+	}
+
+	// 确保数组不为 null
+	if channels == nil {
+		channels = []ChannelItem{}
+	}
+
+	// 6. 返回结果
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"message": "success",
+		"data": gin.H{
+			"list":  channels,
+			"total": total,
+		},
+	})
+}
+
+// GetChannelDetail 获取求助渠道详情
 // GetChannelDetail 获取求助渠道详情
 func GetChannelDetail(c *gin.Context) {
 	idStr := c.Param("id")
@@ -1125,34 +1047,40 @@ func GetChannelDetail(c *gin.Context) {
 		return
 	}
 
-	// 查询渠道详情
+	// 【修改】查询渠道详情，增加 audit_status 和 reject_reason
 	query := `
 		SELECT id, channel_type, name, apply_condition, response_time, 
-		       contact, help_letter_template, crowdfunding_template, 
-		       sort, created_at, updated_at
-		FROM help_channels
-		WHERE id = ? AND is_audit = 1
+		       contact_phone, contact_url, help_letter_template, crowdfunding_template,
+		       audit_status, reject_reason, sort, created_at, updated_at
+		FROM help_channel
+		WHERE id = ?
 	`
+	// 注意：这里去掉了 AND audit_status = 1，以便管理员能查看未通过的详情。
+	// 如果业务要求只有已通过的才能看详情，请加回该条件。
 
 	var channel struct {
-		ID                   uint      `db:"id"`
-		ChannelType          string    `db:"channel_type"`
-		Name                 string    `db:"name"`
-		ApplyCondition       string    `db:"apply_condition"`
-		ResponseTime         string    `db:"response_time"`
-		Contact              string    `db:"contact"`
-		HelpLetterTemplate   string    `db:"help_letter_template"`
-		CrowdfundingTemplate string    `db:"crowdfunding_template"`
-		Sort                 int       `db:"sort"`
-		CreatedAt            time.Time `db:"created_at"`
-		UpdatedAt            time.Time `db:"updated_at"`
+		ID                   uint           `db:"id"`
+		ChannelType          string         `db:"channel_type"`
+		Name                 string         `db:"name"`
+		ApplyCondition       string         `db:"apply_condition"`
+		ResponseTime         string         `db:"response_time"`
+		ContactPhone         string         `db:"contact_phone"`
+		ContactUrl           string         `db:"contact_url"`
+		HelpLetterTemplate   string         `db:"help_letter_template"`
+		CrowdfundingTemplate string         `db:"crowdfunding_template"`
+		AuditStatus          int            `db:"audit_status"`
+		RejectReason         sql.NullString `db:"reject_reason"`
+		Sort                 int            `db:"sort"`
+		CreatedAt            time.Time      `db:"created_at"`
+		UpdatedAt            time.Time      `db:"updated_at"`
 	}
 
 	err = db.MySQL.QueryRow(query, id).Scan(
 		&channel.ID, &channel.ChannelType, &channel.Name,
-		&channel.ApplyCondition, &channel.ResponseTime, &channel.Contact,
+		&channel.ApplyCondition, &channel.ResponseTime, &channel.ContactPhone, &channel.ContactUrl,
 		&channel.HelpLetterTemplate, &channel.CrowdfundingTemplate,
-		&channel.Sort, &channel.CreatedAt, &channel.UpdatedAt,
+		&channel.AuditStatus, &channel.RejectReason, &channel.Sort,
+		&channel.CreatedAt, &channel.UpdatedAt,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -1169,60 +1097,57 @@ func GetChannelDetail(c *gin.Context) {
 		return
 	}
 
-	// 构建模板列表
-	var templates []ChannelTemplate
-	if channel.HelpLetterTemplate != "" {
-		templates = append(templates, ChannelTemplate{
-			Name: "紧急求助信模板",
-			URL:  channel.HelpLetterTemplate,
-		})
-	}
-	if channel.CrowdfundingTemplate != "" {
-		templates = append(templates, ChannelTemplate{
-			Name: "众筹求助模板",
-			URL:  channel.CrowdfundingTemplate,
-		})
+	// 处理 RejectReason null 值
+	var rejectReasonPtr *string
+	if channel.RejectReason.Valid {
+		rejectReasonPtr = &channel.RejectReason.String
 	}
 
-	// 确保数组不为 null
-	if templates == nil {
-		templates = []ChannelTemplate{}
+	// 【修改】构造返回数据，直接使用 ChannelItem 结构体或匿名结构体以匹配期望格式
+	// 这里我们构造一个符合期望 JSON 结构的匿名结构体或直接赋值给 ChannelItem
+	data := ChannelItem{
+		ID:                   channel.ID,
+		ChannelType:          channel.ChannelType, // 直接返回原始类型，不再转换
+		Name:                 channel.Name,
+		ApplyCondition:       channel.ApplyCondition,
+		ResponseTime:         channel.ResponseTime,
+		ContactPhone:         channel.ContactPhone,
+		ContactUrl:           channel.ContactUrl,
+		HelpLetterTemplate:   channel.HelpLetterTemplate,
+		CrowdfundingTemplate: channel.CrowdfundingTemplate,
+		AuditStatus:          channel.AuditStatus,
+		RejectReason:         rejectReasonPtr,
+		Sort:                 channel.Sort,
+		CreatedAt:            channel.CreatedAt.Format("2006-01-02 15:04:05"),
+		UpdatedAt:            channel.UpdatedAt.Format("2006-01-02 15:04:05"),
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"code":    200,
 		"message": "success",
-		"data": ChannelDetailResponse{
-			ID:             channel.ID,
-			Name:           channel.Name,
-			Type:           convertChannelType(channel.ChannelType),
-			TypeName:       channel.ChannelType,
-			Desc:           "响应时间：" + channel.ResponseTime,
-			ApplyCondition: channel.ApplyCondition,
-			ResponseTime:   channel.ResponseTime,
-			ContactValue:   extractContactValue(channel.Contact, convertChannelType(channel.ChannelType)),
-			ServiceTime:    channel.ResponseTime,
-			Templates:      templates,
-			Available:      true,
-			PublishDate:    channel.CreatedAt.Format("2006-01-02T15:04:05Z"),
-			UpdateTime:     channel.UpdatedAt.Format("2006-01-02T15:04:05Z"),
-		},
+		"data":    data,
 	})
 }
 
 // CaseItem 案例项响应结构
 type CaseItem struct {
-	ID          uint   `json:"id"`
-	Title       string `json:"title"`
-	Disease     string `json:"disease"`
-	DiseaseCode string `json:"diseaseCode"`
-	Amount      string `json:"amount"`
-	AmountValue int    `json:"amountValue"`
-	Summary     string `json:"summary"`
-	PublishDate string `json:"publishDate"`
-	CoverUrl    string `json:"coverUrl"`
-	ViewCount   int    `json:"viewCount"`
-	Status      string `json:"status"`
+	ID               uint    `json:"id"`
+	DiseaseID        int64   `json:"diseaseId"`
+	DiseaseName      string  `json:"diseaseName"`
+	ProjectID        uint    `json:"projectId"`
+	ProjectName      string  `json:"projectName"`
+	CaseTitle        string  `json:"caseTitle"`
+	PatientDesc      string  `json:"patientDesc"`
+	ApplyCycle       string  `json:"applyCycle"`
+	ActualRelief     string  `json:"actualRelief"`
+	Experience       string  `json:"experience"`
+	PitfallGuide     string  `json:"pitfallGuide"`
+	CasePdf          *string `json:"casePdf"`          // 使用指针以支持 null
+	MaterialTemplate *string `json:"materialTemplate"` // 使用指针以支持 null
+	AuditStatus      int     `json:"auditStatus"`
+	RejectReason     *string `json:"rejectReason"` // 使用指针以支持 null
+	CreatedAt        string  `json:"createdAt"`
+	UpdatedAt        string  `json:"updatedAt"`
 }
 
 // CaseListResponse 案例列表响应结构
@@ -1234,33 +1159,40 @@ type CaseListResponse struct {
 }
 
 // CaseDetailResponse 案例详情响应结构
+// CaseDetailResponse 案例详情响应结构
 type CaseDetailResponse struct {
-	ID           uint     `json:"id"`
-	Title        string   `json:"title"`
-	Disease      string   `json:"disease"`
-	DiseaseCode  string   `json:"diseaseCode"`
-	Amount       string   `json:"amount"`
-	AmountValue  int      `json:"amountValue"`
-	Summary      string   `json:"summary"`
-	Content      string   `json:"content"`
-	PublishDate  string   `json:"publishDate"`
-	CoverUrl     string   `json:"coverUrl"`
-	Images       []string `json:"images"`
-	VideoUrl     string   `json:"videoUrl"`
-	ProjectName  string   `json:"projectName"`
-	ProjectID    uint     `json:"projectId"`
-	ApplyProcess string   `json:"applyProcess"`
-	Tips         string   `json:"tips"`
-	ViewCount    int      `json:"viewCount"`
-	Status       string   `json:"status"`
-	PdfUrl       string   `json:"pdfUrl"`
+	ID               uint    `json:"id"`
+	DiseaseID        int64   `json:"diseaseId"`
+	DiseaseName      string  `json:"diseaseName"` // 新增：直接从数据库获取或关联查询
+	ProjectID        uint    `json:"projectId"`
+	ProjectName      string  `json:"projectName"`
+	CaseTitle        string  `json:"caseTitle"`
+	PatientDesc      string  `json:"patientDesc"`
+	ApplyCycle       string  `json:"applyCycle"`
+	ActualRelief     string  `json:"actualRelief"`
+	Experience       string  `json:"experience"`
+	PitfallGuide     string  `json:"pitfallGuide"`
+	CasePdf          *string `json:"casePdf"`          // 修改为指针以支持 null
+	MaterialTemplate *string `json:"materialTemplate"` // 修改为指针以支持 null
+	AuditStatus      int     `json:"auditStatus"`
+	RejectReason     *string `json:"rejectReason"` // 修改为指针以支持 null
+	CreatedAt        string  `json:"createdAt"`
+	UpdatedAt        string  `json:"updatedAt"`
+
+	// 保留部分原有字段以兼容旧前端，如果不需要可以删除
+	// Content      string `json:"content"`
+	// Summary      string `json:"summary"`
 }
 
 // GetCases 获取救助案例列表
 func GetCases(c *gin.Context) {
-	// 获取请求参数
-	diseaseStr := c.DefaultQuery("disease", "")
+	// 1. 获取请求参数
+	diseaseStr := c.DefaultQuery("diseaseId", "")
 	keyword := c.DefaultQuery("keyword", "")
+
+	// 【关键修改】获取 auditStatus 参数
+	auditStatusStr := c.DefaultQuery("auditStatus", "")
+
 	pageStr := c.DefaultQuery("page", "1")
 	pageSizeStr := c.DefaultQuery("pageSize", "10")
 
@@ -1274,21 +1206,33 @@ func GetCases(c *gin.Context) {
 	}
 	offset := (page - 1) * pageSize
 
-	// 构建查询条件
-	whereClause := "WHERE is_audit = 1"
+	// 2. 构建查询条件
+	whereClause := "WHERE 1=1"
 	args := []interface{}{}
 
+	// 【关键修改】处理 auditStatus 筛选
+	if auditStatusStr != "" {
+		auditStatus, err := strconv.Atoi(auditStatusStr)
+		// 验证状态值是否合法 (0:待审核, 1:已通过, 2:已驳回)
+		if err == nil && (auditStatus == 0 || auditStatus == 1 || auditStatus == 2) {
+			whereClause += " AND rc.audit_status = ?"
+			args = append(args, auditStatus)
+		}
+		// 如果传递了非法值，忽略该筛选条件，查询所有状态
+	}
+
+	// 其他筛选条件
 	if diseaseStr != "" {
-		whereClause += " AND disease_value = ?"
+		whereClause += " AND rc.disease_id = ?"
 		args = append(args, diseaseStr)
 	}
 	if keyword != "" {
-		whereClause += " AND (case_title LIKE ? OR patient_desc LIKE ?)"
+		whereClause += " AND (rc.case_title LIKE ? OR rc.patient_desc LIKE ?)"
 		args = append(args, "%"+keyword+"%", "%"+keyword+"%")
 	}
 
-	// 查询总数
-	countQuery := "SELECT COUNT(*) FROM relief_cases " + whereClause
+	// 3. 查询总数
+	countQuery := "SELECT COUNT(*) FROM relief_case rc " + whereClause
 	var total int64
 	err := db.MySQL.QueryRow(countQuery, args...).Scan(&total)
 	if err != nil {
@@ -1299,13 +1243,20 @@ func GetCases(c *gin.Context) {
 		return
 	}
 
-	// 查询列表
+	// 4. 查询列表
 	listQuery := `
-		SELECT id, disease_value, case_title, actual_relief, 
-		       experience, created_at
-		FROM relief_cases
+		SELECT rc.id, rc.disease_id, d.name as disease_name, 
+		       rc.project_id, rp.name as project_name,
+		       rc.case_title, rc.patient_desc, rc.apply_cycle, 
+		       rc.actual_relief, rc.experience, rc.pitfall_guide, 
+		       rc.case_pdf, rc.material_template,
+		       rc.audit_status, rc.reject_reason,
+		       rc.created_at, rc.updated_at
+		FROM relief_case rc
+		LEFT JOIN relief_project rp ON rc.project_id = rp.id
+		LEFT JOIN disease d ON rc.disease_id = d.id
 		` + whereClause + `
-		ORDER BY created_at DESC
+		ORDER BY rc.created_at DESC
 		LIMIT ? OFFSET ?
 	`
 	args = append(args, pageSize, offset)
@@ -1323,42 +1274,78 @@ func GetCases(c *gin.Context) {
 	var list []CaseItem
 	for rows.Next() {
 		var caseItem struct {
-			ID           uint      `db:"id"`
-			DiseaseValue string    `db:"disease_value"`
-			CaseTitle    string    `db:"case_title"`
-			ActualRelief string    `db:"actual_relief"`
-			Experience   string    `db:"experience"`
-			CreatedAt    time.Time `db:"created_at"`
+			ID               uint           `db:"id"`
+			DiseaseID        int64          `db:"disease_id"`
+			DiseaseName      string         `db:"disease_name"`
+			ProjectID        uint           `db:"project_id"`
+			ProjectName      string         `db:"project_name"`
+			CaseTitle        string         `db:"case_title"`
+			PatientDesc      string         `db:"patient_desc"`
+			ApplyCycle       string         `db:"apply_cycle"`
+			ActualRelief     string         `db:"actual_relief"`
+			Experience       string         `db:"experience"`
+			PitfallGuide     string         `db:"pitfall_guide"`
+			CasePdf          sql.NullString `db:"case_pdf"`
+			MaterialTemplate sql.NullString `db:"material_template"`
+			AuditStatus      int            `db:"audit_status"`
+			RejectReason     sql.NullString `db:"reject_reason"`
+			CreatedAt        time.Time      `db:"created_at"`
+			UpdatedAt        time.Time      `db:"updated_at"`
 		}
+
 		if err := rows.Scan(
-			&caseItem.ID, &caseItem.DiseaseValue, &caseItem.CaseTitle,
-			&caseItem.ActualRelief, &caseItem.Experience, &caseItem.CreatedAt,
+			&caseItem.ID, &caseItem.DiseaseID, &caseItem.DiseaseName,
+			&caseItem.ProjectID, &caseItem.ProjectName,
+			&caseItem.CaseTitle, &caseItem.PatientDesc, &caseItem.ApplyCycle,
+			&caseItem.ActualRelief, &caseItem.Experience, &caseItem.PitfallGuide,
+			&caseItem.CasePdf, &caseItem.MaterialTemplate,
+			&caseItem.AuditStatus, &caseItem.RejectReason,
+			&caseItem.CreatedAt, &caseItem.UpdatedAt,
 		); err != nil {
 			continue
 		}
 
-		// 转换疾病信息
-		diseaseName, diseaseCode := getDiseaseInfo(caseItem.DiseaseValue)
+		// 处理 NullString 转为 *string
+		var casePdfPtr *string
+		if caseItem.CasePdf.Valid {
+			casePdfPtr = &caseItem.CasePdf.String
+		}
 
-		// 提取金额数值
-		amountValue := extractAmountValue(caseItem.ActualRelief)
+		var materialTemplatePtr *string
+		if caseItem.MaterialTemplate.Valid {
+			materialTemplatePtr = &caseItem.MaterialTemplate.String
+		}
+
+		var rejectReasonPtr *string
+		if caseItem.RejectReason.Valid {
+			rejectReasonPtr = &caseItem.RejectReason.String
+		}
+
+		// 格式化时间
+		createdAtStr := caseItem.CreatedAt.Format("2006-01-02 15:04:05")
+		updatedAtStr := caseItem.UpdatedAt.Format("2006-01-02 15:04:05")
 
 		list = append(list, CaseItem{
-			ID:          caseItem.ID,
-			Title:       caseItem.CaseTitle,
-			Disease:     diseaseName,
-			DiseaseCode: diseaseCode,
-			Amount:      caseItem.ActualRelief,
-			AmountValue: amountValue,
-			Summary:     truncateSummary(caseItem.Experience, 50),
-			PublishDate: caseItem.CreatedAt.Format("2006-01-02T15:04:05Z"),
-			CoverUrl:    "https://example.com/cases/cover/" + strconv.Itoa(int(caseItem.ID)) + ".jpg",
-			ViewCount:   0, // 可后续增加浏览量统计字段
-			Status:      "published",
+			ID:               caseItem.ID,
+			DiseaseID:        caseItem.DiseaseID,
+			DiseaseName:      caseItem.DiseaseName,
+			ProjectID:        caseItem.ProjectID,
+			ProjectName:      caseItem.ProjectName,
+			CaseTitle:        caseItem.CaseTitle,
+			PatientDesc:      caseItem.PatientDesc,
+			ApplyCycle:       caseItem.ApplyCycle,
+			ActualRelief:     caseItem.ActualRelief,
+			Experience:       caseItem.Experience,
+			PitfallGuide:     caseItem.PitfallGuide,
+			CasePdf:          casePdfPtr,
+			MaterialTemplate: materialTemplatePtr,
+			AuditStatus:      caseItem.AuditStatus,
+			RejectReason:     rejectReasonPtr,
+			CreatedAt:        createdAtStr,
+			UpdatedAt:        updatedAtStr,
 		})
 	}
 
-	// 确保数组不为 null
 	if list == nil {
 		list = []CaseItem{}
 	}
@@ -1366,15 +1353,14 @@ func GetCases(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"code":    200,
 		"message": "success",
-		"data": CaseListResponse{
-			List:     list,
-			Total:    total,
-			Page:     page,
-			PageSize: pageSize,
+		"data": gin.H{
+			"total": total,
+			"list":  list,
 		},
 	})
 }
 
+// GetCaseDetail 获取案例详情
 // GetCaseDetail 获取案例详情
 func GetCaseDetail(c *gin.Context) {
 	idStr := c.Param("id")
@@ -1387,37 +1373,51 @@ func GetCaseDetail(c *gin.Context) {
 		return
 	}
 
-	// 查询案例详情（关联项目名称）
+	// 修改 SQL：关联 disease 表获取疾病名称，增加 audit_status, reject_reason, updated_at
 	query := `
-		SELECT rc.id, rc.disease_value, rc.project_id, rc.case_title, 
-		       rc.patient_desc, rc.actual_relief, rc.experience, 
-		       rc.pitfall_guide, rc.case_pdf, rc.material_template, 
-		       rc.created_at, rp.name as project_name
-		FROM relief_cases rc
-		LEFT JOIN relief_projects rp ON rc.project_id = rp.id
-		WHERE rc.id = ? AND rc.is_audit = 1
+		SELECT rc.id, rc.disease_id, d.name as disease_name,
+		       rc.project_id, rp.name as project_name, 
+			   rc.case_title, rc.patient_desc, rc.apply_cycle, 
+		       rc.actual_relief, rc.experience, rc.pitfall_guide, 
+		       rc.case_pdf, rc.material_template,
+		       rc.audit_status, rc.reject_reason,
+		       rc.created_at, rc.updated_at
+		FROM relief_case rc
+		LEFT JOIN relief_project rp ON rc.project_id = rp.id
+		LEFT JOIN disease d ON rc.disease_id = d.id
+		WHERE rc.id = ?
 	`
+	// 注意：这里去掉了 AND rc.audit_status = 1，以便管理员或特定场景下能查看未通过的案例详情。
+	// 如果业务要求只有已通过的才能看详情，请加回该条件。
 
 	var caseItem struct {
-		ID               uint      `db:"id"`
-		DiseaseValue     string    `db:"disease_value"`
-		ProjectID        uint      `db:"project_id"`
-		CaseTitle        string    `db:"case_title"`
-		PatientDesc      string    `db:"patient_desc"`
-		ActualRelief     string    `db:"actual_relief"`
-		Experience       string    `db:"experience"`
-		PitfallGuide     string    `db:"pitfall_guide"`
-		CasePdf          string    `db:"case_pdf"`
-		MaterialTemplate string    `db:"material_template"`
-		CreatedAt        time.Time `db:"created_at"`
-		ProjectName      string    `db:"project_name"`
+		ID               uint           `db:"id"`
+		DiseaseID        int64          `db:"disease_id"`
+		DiseaseName      string         `db:"disease_name"`
+		ProjectID        uint           `db:"project_id"`
+		ProjectName      string         `db:"project_name"`
+		CaseTitle        string         `db:"case_title"`
+		PatientDesc      string         `db:"patient_desc"`
+		ApplyCycle       string         `db:"apply_cycle"`
+		ActualRelief     string         `db:"actual_relief"`
+		Experience       string         `db:"experience"`
+		PitfallGuide     string         `db:"pitfall_guide"`
+		CasePdf          sql.NullString `db:"case_pdf"`
+		MaterialTemplate sql.NullString `db:"material_template"`
+		AuditStatus      int            `db:"audit_status"`
+		RejectReason     sql.NullString `db:"reject_reason"`
+		CreatedAt        time.Time      `db:"created_at"`
+		UpdatedAt        time.Time      `db:"updated_at"`
 	}
 
 	err = db.MySQL.QueryRow(query, id).Scan(
-		&caseItem.ID, &caseItem.DiseaseValue, &caseItem.ProjectID,
-		&caseItem.CaseTitle, &caseItem.PatientDesc, &caseItem.ActualRelief,
-		&caseItem.Experience, &caseItem.PitfallGuide, &caseItem.CasePdf,
-		&caseItem.MaterialTemplate, &caseItem.CreatedAt, &caseItem.ProjectName,
+		&caseItem.ID, &caseItem.DiseaseID, &caseItem.DiseaseName,
+		&caseItem.ProjectID, &caseItem.ProjectName,
+		&caseItem.CaseTitle, &caseItem.PatientDesc, &caseItem.ApplyCycle,
+		&caseItem.ActualRelief, &caseItem.Experience, &caseItem.PitfallGuide,
+		&caseItem.CasePdf, &caseItem.MaterialTemplate,
+		&caseItem.AuditStatus, &caseItem.RejectReason,
+		&caseItem.CreatedAt, &caseItem.UpdatedAt,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -1434,63 +1434,61 @@ func GetCaseDetail(c *gin.Context) {
 		return
 	}
 
-	// 转换疾病信息
-	diseaseName, diseaseCode := getDiseaseInfo(caseItem.DiseaseValue)
-
-	// 提取金额数值
-	amountValue := extractAmountValue(caseItem.ActualRelief)
-
-	// 构建图片列表（示例，实际可从数据库或配置获取）
-	images := []string{
-		"https://example.com/cases/images/" + strconv.Itoa(int(caseItem.ID)) + "_1.jpg",
-		"https://example.com/cases/images/" + strconv.Itoa(int(caseItem.ID)) + "_2.jpg",
-		"https://example.com/cases/images/" + strconv.Itoa(int(caseItem.ID)) + "_3.jpg",
+	// 处理 NullString 转为 *string
+	var casePdfPtr *string
+	if caseItem.CasePdf.Valid {
+		casePdfPtr = &caseItem.CasePdf.String
 	}
 
-	// 确保数组不为 null
-	if images == nil {
-		images = []string{}
+	var materialTemplatePtr *string
+	if caseItem.MaterialTemplate.Valid {
+		materialTemplatePtr = &caseItem.MaterialTemplate.String
 	}
+
+	var rejectReasonPtr *string
+	if caseItem.RejectReason.Valid {
+		rejectReasonPtr = &caseItem.RejectReason.String
+	}
+
+	// 格式化时间
+	createdAtStr := caseItem.CreatedAt.Format("2006-01-02 15:04:05")
+	updatedAtStr := caseItem.UpdatedAt.Format("2006-01-02 15:04:05")
 
 	c.JSON(http.StatusOK, gin.H{
 		"code":    200,
 		"message": "success",
 		"data": CaseDetailResponse{
-			ID:           caseItem.ID,
-			Title:        caseItem.CaseTitle,
-			Disease:      diseaseName,
-			DiseaseCode:  diseaseCode,
-			Amount:       caseItem.ActualRelief,
-			AmountValue:  amountValue,
-			Summary:      truncateSummary(caseItem.Experience, 50),
-			Content:      caseItem.PatientDesc + "\n\n" + caseItem.Experience,
-			PublishDate:  caseItem.CreatedAt.Format("2006-01-02T15:04:05Z"),
-			CoverUrl:     "https://example.com/cases/cover/" + strconv.Itoa(int(caseItem.ID)) + ".jpg",
-			Images:       images,
-			VideoUrl:     "", // 可后续扩展视频字段
-			ProjectName:  caseItem.ProjectName,
-			ProjectID:    caseItem.ProjectID,
-			ApplyProcess: "1.提交申请材料；2.基金会初审；3.专家评估；4.公示；5.发放救助金",
-			Tips:         caseItem.PitfallGuide,
-			ViewCount:    0, // 可后续增加浏览量统计字段
-			Status:       "published",
-			PdfUrl:       caseItem.CasePdf,
+			ID:               caseItem.ID,
+			DiseaseID:        caseItem.DiseaseID,
+			DiseaseName:      caseItem.DiseaseName,
+			ProjectID:        caseItem.ProjectID,
+			ProjectName:      caseItem.ProjectName,
+			CaseTitle:        caseItem.CaseTitle,
+			PatientDesc:      caseItem.PatientDesc,
+			ApplyCycle:       caseItem.ApplyCycle,
+			ActualRelief:     caseItem.ActualRelief,
+			Experience:       caseItem.Experience,
+			PitfallGuide:     caseItem.PitfallGuide,
+			CasePdf:          casePdfPtr,
+			MaterialTemplate: materialTemplatePtr,
+			AuditStatus:      caseItem.AuditStatus,
+			RejectReason:     rejectReasonPtr,
+			CreatedAt:        createdAtStr,
+			UpdatedAt:        updatedAtStr,
 		},
 	})
 }
 
 // getDiseaseInfo 获取疾病信息（名称和代码）
+// 保持原有实现，但确保 map 的 key 是字符串形式的 ID
 func getDiseaseInfo(diseaseValue string) (string, string) {
-	// 根据实际 disease_options 表数据调整映射关系
 	diseaseMap := map[string]struct {
 		Name string
 		Code string
 	}{
 		"1": {Name: "渐冻症", Code: "als"},
 		"2": {Name: "血友病", Code: "hemophilia"},
-		"3": {Name: "罕见病", Code: "rare"},
-		"4": {Name: "戈谢病", Code: "gaucher"},
-		"5": {Name: "庞贝症", Code: "pompe"},
+		// ... 确保这里的 key 与数据库中的 disease_id 对应
 	}
 	if info, ok := diseaseMap[diseaseValue]; ok {
 		return info.Name, info.Code
@@ -1549,8 +1547,8 @@ func GetCasePDF(c *gin.Context) {
 	// 查询案例 PDF 地址
 	query := `
 		SELECT case_pdf, case_title 
-		FROM relief_cases 
-		WHERE id = ? AND is_audit = 1
+		FROM relief_case 
+		WHERE id = ? AND audit_status = 1
 	`
 
 	var casePDF struct {
@@ -1585,11 +1583,7 @@ func GetCasePDF(c *gin.Context) {
 
 	// 生成文件名
 	fileName := casePDF.CaseTitle + ".pdf"
-
-	// 获取文件大小（简化处理，实际可调用文件服务获取）
 	fileSize := getFileSize(casePDF.CasePDF)
-
-	// 设置链接过期时间（秒）
 	expireTime := 3600
 
 	c.JSON(http.StatusOK, gin.H{
@@ -1606,12 +1600,13 @@ func GetCasePDF(c *gin.Context) {
 
 // GetCaseDiseases 获取疾病筛选选项
 func GetCaseDiseases(c *gin.Context) {
-	// 方案一：从数据库动态查询（推荐）
+	// 从数据库动态查询
+	// 注意：表名 relief_cases -> relief_case, 字段 disease_value -> disease_id
 	query := `
-		SELECT DISTINCT rc.disease_value, do.name, do.code
-		FROM relief_cases rc
-		INNER JOIN disease_options do ON rc.disease_value = do.value
-		WHERE rc.is_audit = 1
+		SELECT DISTINCT rc.disease_id, do.name, do.code
+		FROM relief_case rc
+		INNER JOIN disease_options do ON rc.disease_id = do.value
+		WHERE rc.audit_status = 1
 		ORDER BY do.sort ASC
 	`
 
@@ -1639,11 +1634,11 @@ func GetCaseDiseases(c *gin.Context) {
 
 	for rows.Next() {
 		var disease struct {
-			DiseaseValue string `db:"disease_value"`
-			Name         string `db:"name"`
-			Code         string `db:"code"`
+			DiseaseID int64  `db:"disease_id"`
+			Name      string `db:"name"`
+			Code      string `db:"code"`
 		}
-		if err := rows.Scan(&disease.DiseaseValue, &disease.Name, &disease.Code); err != nil {
+		if err := rows.Scan(&disease.DiseaseID, &disease.Name, &disease.Code); err != nil {
 			continue
 		}
 		diseases = append(diseases, DiseaseItem{
@@ -1690,245 +1685,20 @@ func getHardcodedDiseases() []DiseaseItem {
 	}
 }
 
-// CreateProjectRequest 创建项目请求结构
-type CreateProjectRequest struct {
-	Title           string `json:"title" binding:"required"`
-	Content         string `json:"content" binding:"required"`
-	Requirements    string `json:"requirements"`
-	ReliefType      string `json:"reliefType" binding:"required"`
-	DiseaseValue    int    `json:"diseaseValue"`
-	ReliefStandard  string `json:"reliefStandard"`
-	ApplyDifficulty string `json:"applyDifficulty"`
-	ApplyDeadline   string `json:"applyDeadline"`
-	Contact         string `json:"contact"`
-	ApplyForm       string `json:"applyForm"`
-	ApplyGuide      string `json:"applyGuide"`
-	MaterialList    string `json:"materialList"`
-	Organizer       string `json:"organizer"`
-	Sort            int    `json:"sort"`
-}
-
-// CreateProject 新增救助项目
-func CreateProject(c *gin.Context) {
-	var req CreateProjectRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "参数错误",
-		})
-		return
-	}
-
-	// 参数校验
-	if req.Title == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "项目名称不能为空",
-		})
-		return
-	}
-
-	// 插入数据库
-	insertQuery := `
-		INSERT INTO relief_projects 
-		(name, apply_process, apply_condition, relief_type, disease_value,
-		 relief_standard, apply_difficulty, apply_deadline, contact,
-		 apply_form, apply_guide, material_list, organizer, sort,
-		 is_audit, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())
-	`
-	result, err := db.MySQL.Exec(insertQuery,
-		req.Title, req.Content, req.Requirements, req.ReliefType, req.DiseaseValue,
-		req.ReliefStandard, req.ApplyDifficulty, req.ApplyDeadline, req.Contact,
-		req.ApplyForm, req.ApplyGuide, req.MaterialList, req.Organizer, req.Sort)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "创建项目失败",
-		})
-		return
-	}
-
-	// 获取新增的 ID
-	id, _ := result.LastInsertId()
-
-	c.JSON(http.StatusOK, gin.H{
-		"code":    200,
-		"message": "创建成功",
-		"data": gin.H{
-			"id": id,
-		},
-	})
-}
-
-// UpdateProjectRequest 更新项目请求结构
-type UpdateProjectRequest struct {
-	Title           string `json:"title"`
-	Content         string `json:"content"`
-	Requirements    string `json:"requirements"`
-	ReliefType      string `json:"reliefType"`
-	DiseaseValue    int    `json:"diseaseValue"`
-	ReliefStandard  string `json:"reliefStandard"`
-	ApplyDifficulty string `json:"applyDifficulty"`
-	ApplyDeadline   string `json:"applyDeadline"`
-	Contact         string `json:"contact"`
-	ApplyForm       string `json:"applyForm"`
-	ApplyGuide      string `json:"applyGuide"`
-	MaterialList    string `json:"materialList"`
-	Organizer       string `json:"organizer"`
-	Sort            int    `json:"sort"`
-	IsAudit         int    `json:"isAudit"`
-}
-
-// UpdateProject 更新救助项目
-func UpdateProject(c *gin.Context) {
-	idStr := c.Param("id")
-	id, err := strconv.ParseUint(idStr, 10, 32)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "无效的项目 ID",
-		})
-		return
-	}
-
-	var req UpdateProjectRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "参数错误",
-		})
-		return
-	}
-
-	// 构建动态更新语句
-	updateFields := []string{}
-	args := []interface{}{}
-
-	if req.Title != "" {
-		updateFields = append(updateFields, "name = ?")
-		args = append(args, req.Title)
-	}
-	if req.Content != "" {
-		updateFields = append(updateFields, "apply_process = ?")
-		args = append(args, req.Content)
-	}
-	if req.Requirements != "" {
-		updateFields = append(updateFields, "apply_condition = ?")
-		args = append(args, req.Requirements)
-	}
-	if req.ReliefType != "" {
-		updateFields = append(updateFields, "relief_type = ?")
-		args = append(args, req.ReliefType)
-	}
-	if req.DiseaseValue != 0 {
-		updateFields = append(updateFields, "disease_value = ?")
-		args = append(args, req.DiseaseValue)
-	}
-	if req.ReliefStandard != "" {
-		updateFields = append(updateFields, "relief_standard = ?")
-		args = append(args, req.ReliefStandard)
-	}
-	if req.ApplyDifficulty != "" {
-		updateFields = append(updateFields, "apply_difficulty = ?")
-		args = append(args, req.ApplyDifficulty)
-	}
-	if req.ApplyDeadline != "" {
-		updateFields = append(updateFields, "apply_deadline = ?")
-		args = append(args, req.ApplyDeadline)
-	}
-	if req.Contact != "" {
-		updateFields = append(updateFields, "contact = ?")
-		args = append(args, req.Contact)
-	}
-	if req.ApplyForm != "" {
-		updateFields = append(updateFields, "apply_form = ?")
-		args = append(args, req.ApplyForm)
-	}
-	if req.ApplyGuide != "" {
-		updateFields = append(updateFields, "apply_guide = ?")
-		args = append(args, req.ApplyGuide)
-	}
-	if req.MaterialList != "" {
-		updateFields = append(updateFields, "material_list = ?")
-		args = append(args, req.MaterialList)
-	}
-	if req.Organizer != "" {
-		updateFields = append(updateFields, "organizer = ?")
-		args = append(args, req.Organizer)
-	}
-	updateFields = append(updateFields, "sort = ?")
-	args = append(args, req.Sort)
-
-	// 审核状态单独处理
-	if req.IsAudit != 0 {
-		updateFields = append(updateFields, "is_audit = ?")
-		args = append(args, req.IsAudit)
-	}
-
-	updateFields = append(updateFields, "updated_at = NOW()")
-	args = append(args, id)
-
-	updateQuery := `UPDATE relief_projects SET ` + strings.Join(updateFields, ", ") + ` WHERE id = ?`
-	_, err = db.MySQL.Exec(updateQuery, args...)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "更新项目失败",
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"code":    200,
-		"message": "更新成功",
-		"data":    nil,
-	})
-}
-
-// DeleteProject 删除救助项目（软删除）
-func DeleteProject(c *gin.Context) {
-	idStr := c.Param("id")
-	id, err := strconv.ParseUint(idStr, 10, 32)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "无效的项目 ID",
-		})
-		return
-	}
-
-	// 软删除：更新 is_audit = 0
-	updateQuery := `UPDATE relief_projects SET is_audit = 0, updated_at = NOW() WHERE id = ?`
-	_, err = db.MySQL.Exec(updateQuery, id)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "删除项目失败",
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"code":    200,
-		"message": "删除成功",
-		"data":    nil,
-	})
-}
-
 // CreateCaseRequest 创建案例请求结构
 type CreateCaseRequest struct {
-	Title            string `json:"title" binding:"required"`
+	DiseaseID        int64  `json:"diseaseId" binding:"required"`
+	ProjectID        uint   `json:"projectId" binding:"required"`
+	CaseTitle        string `json:"caseTitle" binding:"required"`
 	PatientDesc      string `json:"patientDesc" binding:"required"`
-	DiseaseValue     string `json:"diseaseValue" binding:"required"`
-	ActualRelief     string `json:"actualRelief"`
-	Experience       string `json:"experience"`
-	PitfallGuide     string `json:"pitfallGuide"`
+	ApplyCycle       string `json:"applyCycle" binding:"required"`
+	ActualRelief     string `json:"actualRelief" binding:"required"`
+	Experience       string `json:"experience" binding:"required"`
+	PitfallGuide     string `json:"pitfallGuide" binding:"required"`
 	CasePdf          string `json:"casePdf"`
 	MaterialTemplate string `json:"materialTemplate"`
-	ProjectID        uint   `json:"projectId"`
-	CoverUrl         string `json:"coverUrl"`
-	Sort             int    `json:"sort"`
+	AuditStatus      *int   `json:"auditStatus"`  // 审核状态：0待审核 1已通过 2已驳回，不传默认0
+	RejectReason     string `json:"rejectReason"` // 驳回原因
 }
 
 // CreateCase 新增救助案例
@@ -1937,13 +1707,27 @@ func CreateCase(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"code":    400,
-			"message": "参数错误",
+			"message": "参数错误: " + err.Error(),
 		})
 		return
 	}
 
 	// 参数校验
-	if req.Title == "" {
+	if req.DiseaseID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "疾病ID不能为空",
+		})
+		return
+	}
+	if req.ProjectID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "关联项目ID不能为空",
+		})
+		return
+	}
+	if req.CaseTitle == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"code":    400,
 			"message": "案例标题不能为空",
@@ -1957,18 +1741,56 @@ func CreateCase(c *gin.Context) {
 		})
 		return
 	}
+	if req.ApplyCycle == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "申请周期不能为空",
+		})
+		return
+	}
+	if req.ActualRelief == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "实际救助金额不能为空",
+		})
+		return
+	}
+	if req.Experience == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "申请经验分享不能为空",
+		})
+		return
+	}
+	if req.PitfallGuide == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "申请避坑要点不能为空",
+		})
+		return
+	}
+
+	// 处理审核状态，默认0（待审核）
+	auditStatus := 0
+	if req.AuditStatus != nil {
+		// 验证审核状态值是否合法
+		if *req.AuditStatus >= 0 && *req.AuditStatus <= 2 {
+			auditStatus = *req.AuditStatus
+		}
+	}
 
 	// 插入数据库
 	insertQuery := `
-		INSERT INTO relief_cases 
-		(case_title, patient_desc, disease_value, actual_relief, experience,
-		 pitfall_guide, case_pdf, material_template, project_id, cover_url, sort,
-		 is_audit, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())
+		INSERT INTO relief_case 
+		(disease_id, project_id, case_title, patient_desc, apply_cycle, actual_relief, experience,
+		 pitfall_guide, case_pdf, material_template, audit_status, reject_reason,
+		 created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
 	`
 	result, err := db.MySQL.Exec(insertQuery,
-		req.Title, req.PatientDesc, req.DiseaseValue, req.ActualRelief, req.Experience,
-		req.PitfallGuide, req.CasePdf, req.MaterialTemplate, req.ProjectID, req.CoverUrl, req.Sort)
+		req.DiseaseID, req.ProjectID, req.CaseTitle, req.PatientDesc, req.ApplyCycle, req.ActualRelief, req.Experience,
+		req.PitfallGuide, req.CasePdf, req.MaterialTemplate, auditStatus, req.RejectReason)
+
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    500,
@@ -1993,16 +1815,15 @@ func CreateCase(c *gin.Context) {
 type UpdateCaseRequest struct {
 	Title            string `json:"title"`
 	PatientDesc      string `json:"patientDesc"`
-	DiseaseValue     string `json:"diseaseValue"`
+	DiseaseID        *int64 `json:"diseaseId"` // 指针以便判断是否传递
 	ActualRelief     string `json:"actualRelief"`
 	Experience       string `json:"experience"`
 	PitfallGuide     string `json:"pitfallGuide"`
+	ApplyCycle       string `json:"applyCycle"`
 	CasePdf          string `json:"casePdf"`
 	MaterialTemplate string `json:"materialTemplate"`
-	ProjectID        uint   `json:"projectId"`
-	CoverUrl         string `json:"coverUrl"`
-	Sort             int    `json:"sort"`
-	IsAudit          int    `json:"isAudit"`
+	ProjectID        *uint  `json:"projectId"` // 指针
+	AuditStatus      *int   `json:"auditStatus"`
 }
 
 // UpdateCase 更新救助案例
@@ -2038,9 +1859,9 @@ func UpdateCase(c *gin.Context) {
 		updateFields = append(updateFields, "patient_desc = ?")
 		args = append(args, req.PatientDesc)
 	}
-	if req.DiseaseValue != "" {
-		updateFields = append(updateFields, "disease_value = ?")
-		args = append(args, req.DiseaseValue)
+	if req.DiseaseID != nil {
+		updateFields = append(updateFields, "disease_id = ?")
+		args = append(args, *req.DiseaseID)
 	}
 	if req.ActualRelief != "" {
 		updateFields = append(updateFields, "actual_relief = ?")
@@ -2054,6 +1875,10 @@ func UpdateCase(c *gin.Context) {
 		updateFields = append(updateFields, "pitfall_guide = ?")
 		args = append(args, req.PitfallGuide)
 	}
+	if req.ApplyCycle != "" {
+		updateFields = append(updateFields, "apply_cycle = ?")
+		args = append(args, req.ApplyCycle)
+	}
 	if req.CasePdf != "" {
 		updateFields = append(updateFields, "case_pdf = ?")
 		args = append(args, req.CasePdf)
@@ -2062,27 +1887,27 @@ func UpdateCase(c *gin.Context) {
 		updateFields = append(updateFields, "material_template = ?")
 		args = append(args, req.MaterialTemplate)
 	}
-	if req.ProjectID != 0 {
+	if req.ProjectID != nil {
 		updateFields = append(updateFields, "project_id = ?")
-		args = append(args, req.ProjectID)
+		args = append(args, *req.ProjectID)
 	}
-	if req.CoverUrl != "" {
-		updateFields = append(updateFields, "cover_url = ?")
-		args = append(args, req.CoverUrl)
+	if req.AuditStatus != nil {
+		updateFields = append(updateFields, "audit_status = ?")
+		args = append(args, *req.AuditStatus)
 	}
-	updateFields = append(updateFields, "sort = ?")
-	args = append(args, req.Sort)
 
-	// 审核状态单独处理
-	if req.IsAudit != 0 {
-		updateFields = append(updateFields, "is_audit = ?")
-		args = append(args, req.IsAudit)
+	if len(updateFields) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "未提供更新字段",
+		})
+		return
 	}
 
 	updateFields = append(updateFields, "updated_at = NOW()")
 	args = append(args, id)
 
-	updateQuery := `UPDATE relief_cases SET ` + strings.Join(updateFields, ", ") + ` WHERE id = ?`
+	updateQuery := `UPDATE relief_case SET ` + strings.Join(updateFields, ", ") + ` WHERE id = ?`
 	_, err = db.MySQL.Exec(updateQuery, args...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -2100,6 +1925,7 @@ func UpdateCase(c *gin.Context) {
 }
 
 // DeleteCase 删除救助案例（软删除）
+// DeleteCase 删除救助案例（真删除/物理删除）
 func DeleteCase(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
@@ -2111,13 +1937,345 @@ func DeleteCase(c *gin.Context) {
 		return
 	}
 
-	// 软删除：更新 is_audit = 0
-	updateQuery := `UPDATE relief_cases SET is_audit = 0, updated_at = NOW() WHERE id = ?`
-	_, err = db.MySQL.Exec(updateQuery, id)
+	// 【修改点】使用 DELETE 语句进行物理删除
+	// 注意：如果 relief_case 表有其他外键关联（如评论、点赞等），可能需要先清理关联数据或设置级联删除
+	deleteQuery := `DELETE FROM relief_case WHERE id = ?`
+	result, err := db.MySQL.Exec(deleteQuery, id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    500,
 			"message": "删除案例失败",
+		})
+		return
+	}
+
+	// 检查是否真的删除了记录（防止ID不存在时返回成功）
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "获取删除结果失败",
+		})
+		return
+	}
+
+	if rowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{
+			"code":    404,
+			"message": "案例不存在",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"message": "删除成功",
+		"data":    nil,
+	})
+}
+
+// ProjectOptionItem 项目选项项（简化结构）
+type ProjectOptionItem struct {
+	ID   uint   `json:"id"`
+	Name string `json:"name"`
+}
+
+// ProjectOptionsResponse 项目选项响应结构
+type ProjectOptionsResponse struct {
+	List []ProjectOptionItem `json:"list"`
+}
+
+// GetProjectOptions 获取项目选项列表（用于下拉选择）
+func GetProjectOptions(c *gin.Context) {
+	// 获取请求参数
+	pageStr := c.DefaultQuery("page", "1")
+	pageSizeStr := c.DefaultQuery("pageSize", "20")
+	keyword := c.DefaultQuery("keyword", "")
+	auditStatusStr := c.DefaultQuery("auditStatus", "")
+
+	// 处理分页参数
+	page, _ := strconv.Atoi(pageStr)
+	pageSize, _ := strconv.Atoi(pageSizeStr)
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 20
+	}
+	offset := (page - 1) * pageSize
+
+	// 构建查询条件
+	whereClause := "WHERE 1=1"
+	args := []interface{}{}
+
+	// 处理 auditStatus 筛选
+	if auditStatusStr != "" {
+		auditStatus, err := strconv.Atoi(auditStatusStr)
+		if err == nil && (auditStatus == 0 || auditStatus == 1 || auditStatus == 2) {
+			whereClause += " AND audit_status = ?"
+			args = append(args, auditStatus)
+		}
+	}
+
+	// 处理 keyword 关键字筛选（匹配项目名称）
+	if keyword != "" {
+		whereClause += " AND name LIKE ?"
+		args = append(args, "%"+keyword+"%")
+	}
+
+	// 查询列表
+	listQuery := `
+        SELECT id, name
+        FROM relief_project
+        ` + whereClause + `
+        ORDER BY sort DESC, id DESC
+        LIMIT ? OFFSET ?
+    `
+	args = append(args, pageSize, offset)
+
+	rows, err := db.MySQL.Query(listQuery, args...)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "查询项目选项失败",
+		})
+		return
+	}
+	defer rows.Close()
+
+	var list []ProjectOptionItem
+	for rows.Next() {
+		var item ProjectOptionItem
+		if err := rows.Scan(&item.ID, &item.Name); err != nil {
+			continue
+		}
+		list = append(list, item)
+	}
+
+	// 确保数组不为 null
+	if list == nil {
+		list = []ProjectOptionItem{}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"message": "success",
+		"data": ProjectOptionsResponse{
+			List: list,
+		},
+	})
+}
+
+// CreateChannelRequest 创建渠道请求结构
+type CreateChannelRequest struct {
+	ChannelType          string `json:"channelType" binding:"required"`
+	Name                 string `json:"name" binding:"required"`
+	ApplyCondition       string `json:"applyCondition" binding:"required"`
+	ResponseTime         string `json:"responseTime" binding:"required"`
+	ContactPhone         string `json:"contactPhone"`
+	ContactUrl           string `json:"contactUrl"`
+	HelpLetterTemplate   string `json:"helpLetterTemplate"`
+	CrowdfundingTemplate string `json:"crowdfundingTemplate"`
+	Sort                 int    `json:"sort"`
+	AuditStatus          *int   `json:"auditStatus"` // 可选，默认0
+}
+
+// UpdateChannelRequest 更新渠道请求结构
+type UpdateChannelRequest struct {
+	ChannelType          string  `json:"channelType"`
+	Name                 string  `json:"name"`
+	ApplyCondition       string  `json:"applyCondition"`
+	ResponseTime         string  `json:"responseTime"`
+	ContactPhone         string  `json:"contactPhone"`
+	ContactUrl           string  `json:"contactUrl"`
+	HelpLetterTemplate   string  `json:"helpLetterTemplate"`
+	CrowdfundingTemplate string  `json:"crowdfundingTemplate"`
+	Sort                 *int    `json:"sort"`
+	AuditStatus          *int    `json:"auditStatus"`
+	RejectReason         *string `json:"rejectReason"`
+}
+
+// CreateChannel 新增求助渠道
+func CreateChannel(c *gin.Context) {
+	var req CreateChannelRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "参数错误: " + err.Error(),
+		})
+		return
+	}
+
+	// 处理默认审核状态
+	auditStatus := 0
+	if req.AuditStatus != nil {
+		if *req.AuditStatus >= 0 && *req.AuditStatus <= 2 {
+			auditStatus = *req.AuditStatus
+		}
+	}
+
+	insertQuery := `
+		INSERT INTO help_channel 
+		(channel_type, name, apply_condition, response_time, contact_phone, contact_url,
+		 help_letter_template, crowdfunding_template, audit_status, reject_reason, sort, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, NOW(), NOW())
+	`
+	result, err := db.MySQL.Exec(insertQuery,
+		req.ChannelType, req.Name, req.ApplyCondition, req.ResponseTime,
+		req.ContactPhone, req.ContactUrl, req.HelpLetterTemplate, req.CrowdfundingTemplate,
+		auditStatus, req.Sort)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "创建渠道失败",
+		})
+		return
+	}
+
+	id, _ := result.LastInsertId()
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"message": "创建成功",
+		"data": gin.H{
+			"id": id,
+		},
+	})
+}
+
+// UpdateChannel 更新求助渠道
+func UpdateChannel(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "无效的渠道 ID",
+		})
+		return
+	}
+
+	var req UpdateChannelRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "参数错误",
+		})
+		return
+	}
+
+	// 构建动态更新语句
+	updateFields := []string{}
+	args := []interface{}{}
+
+	if req.ChannelType != "" {
+		updateFields = append(updateFields, "channel_type = ?")
+		args = append(args, req.ChannelType)
+	}
+	if req.Name != "" {
+		updateFields = append(updateFields, "name = ?")
+		args = append(args, req.Name)
+	}
+	if req.ApplyCondition != "" {
+		updateFields = append(updateFields, "apply_condition = ?")
+		args = append(args, req.ApplyCondition)
+	}
+	if req.ResponseTime != "" {
+		updateFields = append(updateFields, "response_time = ?")
+		args = append(args, req.ResponseTime)
+	}
+	if req.ContactPhone != "" {
+		updateFields = append(updateFields, "contact_phone = ?")
+		args = append(args, req.ContactPhone)
+	}
+	if req.ContactUrl != "" {
+		updateFields = append(updateFields, "contact_url = ?")
+		args = append(args, req.ContactUrl)
+	}
+	if req.HelpLetterTemplate != "" {
+		updateFields = append(updateFields, "help_letter_template = ?")
+		args = append(args, req.HelpLetterTemplate)
+	}
+	if req.CrowdfundingTemplate != "" {
+		updateFields = append(updateFields, "crowdfunding_template = ?")
+		args = append(args, req.CrowdfundingTemplate)
+	}
+	if req.Sort != nil {
+		updateFields = append(updateFields, "sort = ?")
+		args = append(args, *req.Sort)
+	}
+	if req.AuditStatus != nil {
+		updateFields = append(updateFields, "audit_status = ?")
+		args = append(args, *req.AuditStatus)
+	}
+	if req.RejectReason != nil {
+		updateFields = append(updateFields, "reject_reason = ?")
+		args = append(args, *req.RejectReason)
+	}
+
+	if len(updateFields) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "未提供更新字段",
+		})
+		return
+	}
+
+	updateFields = append(updateFields, "updated_at = NOW()")
+	args = append(args, id)
+
+	updateQuery := `UPDATE help_channel SET ` + strings.Join(updateFields, ", ") + ` WHERE id = ?`
+	_, err = db.MySQL.Exec(updateQuery, args...)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "更新渠道失败",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"message": "更新成功",
+		"data":    nil,
+	})
+}
+
+// DeleteChannel 删除求助渠道（物理删除）
+func DeleteChannel(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "无效的渠道 ID",
+		})
+		return
+	}
+
+	deleteQuery := `DELETE FROM help_channel WHERE id = ?`
+	result, err := db.MySQL.Exec(deleteQuery, id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "删除渠道失败",
+		})
+		return
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "获取删除结果失败",
+		})
+		return
+	}
+
+	if rowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{
+			"code":    404,
+			"message": "渠道不存在",
 		})
 		return
 	}
