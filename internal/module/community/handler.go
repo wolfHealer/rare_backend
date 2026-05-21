@@ -1,10 +1,12 @@
-package post
+package community
 
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"net/http"
+	"rare_backend/internal/middleware"
+	"rare_backend/internal/module/community/domain"
 	"rare_backend/internal/pkg/db"
 	"strconv"
 	"strings"
@@ -15,116 +17,21 @@ import (
 
 // LikePost 点赞帖子
 func LikePost(c *gin.Context) {
-	// 从 URL 参数中获取帖子 ID
-	postID := c.Param("id")
-
-	// 验证帖子 ID 是否为有效整数
-	id, err := strconv.ParseInt(postID, 10, 64)
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "无效的帖子 ID",
-		})
+		respondBadRequest(c, "无效的帖子 ID")
 		return
 	}
-
-	// 查询帖子是否存在
-	var count int
-	checkQuery := "SELECT COUNT(*) FROM post WHERE id = ? AND status = 1"
-	err = db.MySQL.QueryRow(checkQuery, id).Scan(&count)
-	if err != nil || count == 0 {
-		c.JSON(http.StatusNotFound, gin.H{
-			"code":    404,
-			"message": "帖子不存在",
-		})
+	userID, ok := middleware.MustGetUserID(c)
+	if !ok {
 		return
 	}
-
-	// 假设用户 ID 从 JWT 或上下文中获取（此处简化为固定值）
-	userID := int64(1001) // 实际开发中应从认证中间件获取
-
-	// 查询用户是否已点赞
-	var isLiked bool
-	likeQuery := "SELECT COUNT(*) FROM post_like WHERE target_id = ? AND user_id = ?"
-	err = db.MySQL.QueryRow(likeQuery, id, userID).Scan(&count)
+	result, err := postSvc.ToggleLike(id, userID)
 	if err != nil {
-		fmt.Printf("Like query error: %v\n", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "查询点赞状态失败",
-		})
+		respondServiceError(c, err)
 		return
 	}
-	isLiked = count > 0
-
-	// 更新点赞状态
-	if isLiked {
-		// 取消点赞
-		_, err = db.MySQL.Exec("DELETE FROM post_like WHERE post_id = ? AND user_id = ?", id, userID)
-		if err != nil {
-			fmt.Printf("Unlike error: %v\n", err)
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"code":    500,
-				"message": "取消点赞失败",
-			})
-			return
-		}
-		isLiked = false
-	} else {
-		// 点赞
-		_, err = db.MySQL.Exec("INSERT INTO post_like (post_id, user_id) VALUES (?, ?)", id, userID)
-		if err != nil {
-			fmt.Printf("Like error: %v\n", err)
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"code":    500,
-				"message": "点赞失败",
-			})
-			return
-		}
-		isLiked = true
-	}
-
-	// 更新帖子点赞数
-	var likeCount int
-	updateLikeCountQuery := `
-		UPDATE post 
-		SET like_count = (SELECT COUNT(*) FROM post_like WHERE post_id = ?)
-		WHERE id = ?
-	`
-	_, err = db.MySQL.Exec(updateLikeCountQuery, id, id)
-	if err != nil {
-		fmt.Printf("Update like count error: %v\n", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "更新点赞数失败",
-		})
-		return
-	}
-
-	// 查询最新的点赞数
-	countQuery := "SELECT like_count FROM post WHERE id = ?"
-	err = db.MySQL.QueryRow(countQuery, id).Scan(&likeCount)
-	if err != nil {
-		fmt.Printf("Query like count error: %v\n", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "查询点赞数失败",
-		})
-		return
-	}
-
-	// 构造响应数据
-	response := gin.H{
-		"code":    200,
-		"message": "success",
-		"data": gin.H{
-			"is_liked":   isLiked,
-			"like_count": likeCount,
-		},
-	}
-
-	// 返回结果
-	c.JSON(http.StatusOK, response)
+	respondOK(c, result)
 }
 
 // GetPostComments 获取帖子评论树
@@ -135,10 +42,7 @@ func GetPostComments(c *gin.Context) {
 	// 验证帖子 ID 是否为有效整数
 	id, err := strconv.ParseInt(postID, 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "无效的帖子 ID",
-		})
+		respondBadRequest(c, "无效的帖子 ID")
 		return
 	}
 
@@ -147,10 +51,7 @@ func GetPostComments(c *gin.Context) {
 	checkQuery := "SELECT COUNT(*) FROM post WHERE id = ? AND status = 1"
 	err = db.MySQL.QueryRow(checkQuery, id).Scan(&count)
 	if err != nil || count == 0 {
-		c.JSON(http.StatusNotFound, gin.H{
-			"code":    404,
-			"message": "帖子不存在",
-		})
+		respondNotFound(c, "帖子不存在")
 		return
 	}
 
@@ -166,10 +67,7 @@ func GetPostComments(c *gin.Context) {
 	rows, err := db.MySQL.Query(query, id)
 	if err != nil {
 		fmt.Printf("Query comments error: %v\n", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "查询评论失败",
-		})
+		respondInternalError(c, "查询评论失败")
 		return
 	}
 	defer rows.Close()
@@ -236,181 +134,41 @@ func GetPostComments(c *gin.Context) {
 		}
 	}
 
-	// 构造响应数据
-	response := gin.H{
-		"code":    200,
-		"message": "success",
-		"data":    rootComments, // 返回嵌套的树形结构
-	}
-
-	// 返回结果
-	c.JSON(http.StatusOK, response)
+	respondOK(c, rootComments)
 }
 
-// 创建评论
+// CreateComment 创建评论
 func CreateComment(c *gin.Context) {
-	// 从 URL 参数中获取帖子 ID
-	postID := c.Param("id")
-
-	// 验证帖子 ID 是否为有效整数
-	id, err := strconv.ParseInt(postID, 10, 64)
+	postID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "无效的帖子 ID",
-		})
+		respondBadRequest(c, "无效的帖子 ID")
 		return
 	}
-
-	// 查询帖子是否存在
-	var count int
-	checkQuery := "SELECT COUNT(*) FROM post WHERE id = ? AND status = 1"
-	err = db.MySQL.QueryRow(checkQuery, id).Scan(&count)
-	if err != nil || count == 0 {
-		c.JSON(http.StatusNotFound, gin.H{
-			"code":    404,
-			"message": "帖子不存在",
-		})
+	userID, ok := middleware.MustGetUserID(c)
+	if !ok {
 		return
 	}
-
-	// 定义请求结构体
 	var req struct {
-		UserID   int64  `json:"user_id" binding:"required"`
 		Content  string `json:"content" binding:"required"`
-		ParentID *int64 `json:"parent_id"` // 可选字段，表示回复的评论 ID
+		ParentID *int64 `json:"parent_id"`
 	}
-
-	// 绑定请求参数
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "参数错误",
-		})
+		respondBadRequest(c, "参数错误")
 		return
 	}
-
-	// 初始化默认值
-	parentID := int64(0)
-	rootID := int64(0)
-
-	// 如果指定了 parent_id，则查询父评论是否存在并确定 root_id
-	if req.ParentID != nil && *req.ParentID > 0 {
-		parentID = *req.ParentID
-
-		// 查询父评论是否存在且属于当前帖子
-		var parentComment struct {
-			ID     int64 `db:"id"`
-			RootID int64 `db:"root_id"`
-		}
-		parentQuery := "SELECT id, root_id FROM comment WHERE id = ? AND target_type = 'post' AND target_id = ?"
-		err = db.MySQL.QueryRow(parentQuery, parentID, id).Scan(&parentComment.ID, &parentComment.RootID)
-		if err != nil || parentComment.ID == 0 {
-			c.JSON(http.StatusNotFound, gin.H{
-				"code":    404,
-				"message": "父评论不存在或不属于当前帖子",
-			})
-			return
-		}
-
-		// 设置 root_id
-		if parentComment.RootID == 0 {
-			rootID = parentID // 父评论是一级评论
-		} else {
-			rootID = parentComment.RootID // 父评论是子评论
-		}
-	}
-
-	// 开启事务
-	tx, err := db.MySQL.Begin()
+	result, err := commentSvc.Create(domain.CreateCommentInput{
+		PostID: postID, UserID: userID, Content: req.Content, ParentID: req.ParentID,
+	})
 	if err != nil {
-		fmt.Printf("Begin transaction error: %v\n", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "开启事务失败",
-		})
+		respondServiceError(c, err)
 		return
 	}
-	defer tx.Rollback() // 确保事务回滚
-
-	// 插入评论数据
-	insertQuery := `
-		INSERT INTO comment (
-			target_id, target_type, user_id, content, parent_id, root_id, created_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?)
-	`
-	now := time.Now()
-	res, err := tx.Exec(insertQuery, id, "post", req.UserID, req.Content, parentID, rootID, now)
-	if err != nil {
-		fmt.Printf("Insert comment error: %v\n", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "创建评论失败",
-		})
-		return
-	}
-
-	// 获取插入的评论 ID
-	commentID, _ := res.LastInsertId()
-
-	// 更新父评论或帖子的 reply_count
-	if parentID > 0 {
-		// 更新父评论的 reply_count
-		_, err = tx.Exec("UPDATE comment SET reply_count = reply_count + 1 WHERE id = ?", parentID)
-	} else {
-		// 更新帖子的 comment_count
-		_, err = tx.Exec("UPDATE post SET comment_count = comment_count + 1 WHERE id = ?", id)
-	}
-	if err != nil {
-		fmt.Printf("Update reply/comment count error: %v\n", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "更新评论计数失败",
-		})
-		return
-	}
-
-	// 提交事务
-	if err := tx.Commit(); err != nil {
-		fmt.Printf("Commit transaction error: %v\n", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "提交事务失败",
-		})
-		return
-	}
-
-	// 查询用户昵称
-	var displayName sql.NullString
-	userQuery := "SELECT display_name FROM user WHERE id = ?"
-	err = db.MySQL.QueryRow(userQuery, req.UserID).Scan(&displayName)
-	if err != nil {
-		fmt.Printf("Query user error: %v\n", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "查询用户信息失败",
-		})
-		return
-	}
-
-	// 构造响应数据
-	response := gin.H{
-		"code":    201,
-		"message": "评论创建成功",
-		"data": map[string]interface{}{
-			"id":           commentID,
-			"post_id":      id,
-			"user_id":      req.UserID,
-			"display_name": displayName.String,
-			"content":      req.Content,
-			"parent_id":    parentID,
-			"root_id":      rootID,
-			"created_at":   now.Format(time.RFC3339),
-		},
-	}
-
-	// 返回结果
-	c.JSON(http.StatusCreated, response)
+	respondCreated(c, "评论创建成功", gin.H{
+		"id": result.ID, "post_id": result.PostID, "user_id": result.UserID,
+		"display_name": result.DisplayName, "content": result.Content,
+		"parent_id": result.ParentID, "root_id": result.RootID,
+		"created_at": result.CreatedAt.Format(time.RFC3339),
+	})
 }
 
 // PostOptionsResponse 帖子筛选选项响应
@@ -424,11 +182,6 @@ type PostOptionsResponse struct {
 type OptionItem struct {
 	Label string `json:"label"`
 	Value string `json:"value"`
-}
-
-// UpdateCommentRequest 更新评论请求
-type UpdateCommentRequest struct {
-	Content string `json:"content" binding:"required"`
 }
 
 // GetPostOptions 获取帖子筛选选项
@@ -445,10 +198,7 @@ func GetPostOptions(c *gin.Context) {
 	diseaseQuery := "SELECT id, name FROM disease WHERE status = 1"
 	diseaseRows, err := db.MySQL.Query(diseaseQuery)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "查询疾病选项失败",
-		})
+		respondInternalError(c, "查询疾病选项失败")
 		return
 	}
 	defer diseaseRows.Close()
@@ -469,13 +219,10 @@ func GetPostOptions(c *gin.Context) {
 	}
 
 	// 获取分类选项
-	categoryQuery := "SELECT id, name FROM post_category WHERE status = 1"
+	categoryQuery := "SELECT id, name FROM category WHERE status = 1 ORDER BY sort_order ASC, id ASC"
 	categoryRows, err := db.MySQL.Query(categoryQuery)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "查询分类选项失败",
-		})
+		respondInternalError(c, "查询分类选项失败")
 		return
 	}
 	defer categoryRows.Close()
@@ -495,234 +242,82 @@ func GetPostOptions(c *gin.Context) {
 		})
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code":    200,
-		"message": "success",
-		"data": PostOptionsResponse{
-			Types:      types,
-			Diseases:   diseases,
-			Categories: categories,
-		},
+	respondOK(c, PostOptionsResponse{
+		Types:      types,
+		Diseases:   diseases,
+		Categories: categories,
 	})
 }
 
 // DeletePost 删除帖子（软删除）
 func DeletePost(c *gin.Context) {
-	postID := c.Param("id")
-	id, err := strconv.ParseInt(postID, 10, 64)
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "无效的帖子 ID",
-		})
+		respondBadRequest(c, "无效的帖子 ID")
 		return
 	}
-
-	// 检查帖子是否存在且属于当前用户
-	userID := int64(1001) // 实际应从 JWT 获取
-	checkQuery := "SELECT id, user_id FROM post WHERE id = ? AND status = 1"
-	var postUserID int64
-	err = db.MySQL.QueryRow(checkQuery, id).Scan(&postUserID)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			c.JSON(http.StatusNotFound, gin.H{
-				"code":    404,
-				"message": "帖子不存在",
-			})
+	userID, ok := middleware.MustGetUserID(c)
+	if !ok {
+		return
+	}
+	if err := postSvc.Delete(id, userID, middleware.IsAdmin(c)); err != nil {
+		if errors.Is(err, domain.ErrForbidden) {
+			respondForbidden(c, "无权限删除该帖子")
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "查询帖子失败",
-		})
+		respondServiceError(c, err)
 		return
 	}
-
-	// 验证权限
-	if postUserID != userID {
-		c.JSON(http.StatusForbidden, gin.H{
-			"code":    403,
-			"message": "无权限删除该帖子",
-		})
-		return
-	}
-
-	// 软删除：将 status 设为 0
-	deleteQuery := "UPDATE post SET status = 0, updated_at = ? WHERE id = ?"
-	_, err = db.MySQL.Exec(deleteQuery, time.Now(), id)
-	if err != nil {
-		fmt.Printf("Delete post error: %v\n", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "删除帖子失败",
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"code":    200,
-		"message": "success",
-	})
+	respondOK(c, nil)
 }
 
 // UpdateComment 更新评论
 func UpdateComment(c *gin.Context) {
-	commentID := c.Param("id")
-	id, err := strconv.ParseInt(commentID, 10, 64)
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "无效的评论 ID",
-		})
+		respondBadRequest(c, "无效的评论 ID")
 		return
 	}
-
 	var req UpdateCommentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "参数错误",
-		})
+		respondBadRequest(c, "参数错误")
 		return
 	}
-
-	// 检查评论是否存在且属于当前用户
-	userID := int64(1001) // 实际应从 JWT 获取
-	checkQuery := "SELECT id, user_id FROM comment WHERE id = ? AND status = 1"
-	var commentUserID int64
-	err = db.MySQL.QueryRow(checkQuery, id).Scan(&commentUserID)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			c.JSON(http.StatusNotFound, gin.H{
-				"code":    404,
-				"message": "评论不存在",
-			})
+	userID, ok := middleware.MustGetUserID(c)
+	if !ok {
+		return
+	}
+	if err := commentSvc.Update(id, userID, req.Content, middleware.IsAdmin(c)); err != nil {
+		if errors.Is(err, domain.ErrForbidden) {
+			respondForbidden(c, "无权限修改该评论")
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "查询评论失败",
-		})
+		respondServiceError(c, err)
 		return
 	}
-
-	// 验证权限
-	if commentUserID != userID {
-		c.JSON(http.StatusForbidden, gin.H{
-			"code":    403,
-			"message": "无权限修改该评论",
-		})
-		return
-	}
-
-	// 更新评论内容
-	updateQuery := "UPDATE comment SET content = ?, updated_at = ? WHERE id = ?"
-	_, err = db.MySQL.Exec(updateQuery, req.Content, time.Now(), id)
-	if err != nil {
-		fmt.Printf("Update comment error: %v\n", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "更新评论失败",
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"code":    200,
-		"message": "success",
-	})
+	respondOK(c, nil)
 }
 
 // DeleteComment 删除评论（软删除）
 func DeleteComment(c *gin.Context) {
-	commentID := c.Param("id")
-	id, err := strconv.ParseInt(commentID, 10, 64)
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "无效的评论 ID",
-		})
+		respondBadRequest(c, "无效的评论 ID")
 		return
 	}
-
-	// 检查评论是否存在且属于当前用户
-	userID := int64(1001) // 实际应从 JWT 获取
-	checkQuery := "SELECT id, user_id, target_id FROM comment WHERE id = ? AND status = 1"
-	var commentUserID, postID int64
-	err = db.MySQL.QueryRow(checkQuery, id).Scan(&commentUserID, &postID)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			c.JSON(http.StatusNotFound, gin.H{
-				"code":    404,
-				"message": "评论不存在",
-			})
+	userID, ok := middleware.MustGetUserID(c)
+	if !ok {
+		return
+	}
+	if err := commentSvc.Delete(id, userID, middleware.IsAdmin(c)); err != nil {
+		if errors.Is(err, domain.ErrForbidden) {
+			respondForbidden(c, "无权限删除该评论")
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "查询评论失败",
-		})
+		respondServiceError(c, err)
 		return
 	}
-
-	// 验证权限
-	if commentUserID != userID {
-		c.JSON(http.StatusForbidden, gin.H{
-			"code":    403,
-			"message": "无权限删除该评论",
-		})
-		return
-	}
-
-	// 开启事务
-	tx, err := db.MySQL.Begin()
-	if err != nil {
-		fmt.Printf("Begin transaction error: %v\n", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "开启事务失败",
-		})
-		return
-	}
-	defer tx.Rollback()
-
-	// 软删除评论
-	deleteQuery := "UPDATE comment SET status = 0, updated_at = ? WHERE id = ?"
-	_, err = tx.Exec(deleteQuery, time.Now(), id)
-	if err != nil {
-		fmt.Printf("Delete comment error: %v\n", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "删除评论失败",
-		})
-		return
-	}
-
-	// 更新帖子的评论计数
-	_, err = tx.Exec("UPDATE post SET comment_count = comment_count - 1 WHERE id = ? AND comment_count > 0", postID)
-	if err != nil {
-		fmt.Printf("Update comment count error: %v\n", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "更新评论计数失败",
-		})
-		return
-	}
-
-	// 提交事务
-	if err := tx.Commit(); err != nil {
-		fmt.Printf("Commit transaction error: %v\n", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "提交事务失败",
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"code":    200,
-		"message": "success",
-	})
+	respondOK(c, nil)
 }
 
 // CommentTreeNode 评论树节点结构
@@ -770,18 +365,18 @@ func GetCommentTree(c *gin.Context) {
 	// 1. 解析参数
 	targetType := c.Query("target_type")
 	if targetType == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": "target_type 不能为空"})
+		respondBadRequest(c, "target_type 不能为空")
 		return
 	}
 
 	targetIDStr := c.Query("target_id")
 	if targetIDStr == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": "target_id 不能为空"})
+		respondBadRequest(c, "target_id 不能为空")
 		return
 	}
 	targetID, err := strconv.ParseInt(targetIDStr, 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": "无效的 target_id"})
+		respondBadRequest(c, "无效的 target_id")
 		return
 	}
 
@@ -798,7 +393,7 @@ func GetCommentTree(c *gin.Context) {
 	err = db.MySQL.QueryRow(countQuery, targetType, targetID).Scan(&total)
 	if err != nil {
 		fmt.Printf("Count comments error: %v\n", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "查询评论总数失败"})
+		respondInternalError(c, "查询评论总数失败")
 		return
 	}
 
@@ -823,7 +418,7 @@ func GetCommentTree(c *gin.Context) {
 	rows, err := db.MySQL.Query(rootCommentsQuery, targetType, targetID, size, offset)
 	if err != nil {
 		fmt.Printf("Query root comments error: %v\n", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "查询评论列表失败"})
+		respondInternalError(c, "查询评论列表失败")
 		return
 	}
 	defer rows.Close()
@@ -930,17 +525,7 @@ func GetCommentTree(c *gin.Context) {
 		}
 	}
 
-	// 5. 构造响应
-	c.JSON(http.StatusOK, gin.H{
-		"code":    200,
-		"message": "success",
-		"data": gin.H{
-			"list":  rootComments,
-			"total": total,
-			"page":  page,
-			"size":  size,
-		},
-	})
+	respondPage(c, rootComments, total, page, size)
 }
 
 // GetCommentReplies 获取某根评论下的全部回复
@@ -948,12 +533,12 @@ func GetCommentReplies(c *gin.Context) {
 	// 1. 解析参数
 	rootIDStr := c.Query("root_id")
 	if rootIDStr == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": "root_id 不能为空"})
+		respondBadRequest(c, "root_id 不能为空")
 		return
 	}
 	rootID, err := strconv.ParseInt(rootIDStr, 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": "无效的 root_id"})
+		respondBadRequest(c, "无效的 root_id")
 		return
 	}
 
@@ -985,10 +570,10 @@ func GetCommentReplies(c *gin.Context) {
 
 	if err != nil {
 		if err == sql.ErrNoRows {
-			c.JSON(http.StatusNotFound, gin.H{"code": 404, "message": "根评论不存在"})
+			respondNotFound(c, "根评论不存在")
 		} else {
 			fmt.Printf("Query root comment detail error: %v\n", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "查询根评论失败"})
+			respondInternalError(c, "查询根评论失败")
 		}
 		return
 	}
@@ -1001,7 +586,7 @@ func GetCommentReplies(c *gin.Context) {
 	err = db.MySQL.QueryRow(countQuery, rootID).Scan(&total)
 	if err != nil {
 		fmt.Printf("Count replies error: %v\n", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "查询回复总数失败"})
+		respondInternalError(c, "查询回复总数失败")
 		return
 	}
 
@@ -1028,7 +613,7 @@ func GetCommentReplies(c *gin.Context) {
 	rows, err := db.MySQL.Query(repliesQuery, rootID, size, offset)
 	if err != nil {
 		fmt.Printf("Query replies list error: %v\n", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "查询回复列表失败"})
+		respondInternalError(c, "查询回复列表失败")
 		return
 	}
 	defer rows.Close()
@@ -1057,17 +642,12 @@ func GetCommentReplies(c *gin.Context) {
 		repliesList = append(repliesList, &item)
 	}
 
-	// 5. 构造响应
-	c.JSON(http.StatusOK, gin.H{
-		"code":    200,
-		"message": "success",
-		"data": gin.H{
-			"root_comment": rootComment,
-			"list":         repliesList,
-			"total":        total,
-			"page":         page,
-			"size":         size,
-		},
+	respondOK(c, gin.H{
+		"root_comment": rootComment,
+		"list":         repliesList,
+		"total":        total,
+		"page":         page,
+		"pageSize":     size,
 	})
 }
 
@@ -1096,33 +676,6 @@ type PostResponse struct {
 	UpdatedAt     string   `json:"updated_at,omitempty"`
 	IsLiked       bool     `json:"is_liked"`     // 当前用户是否点赞
 	IsFavorited   bool     `json:"is_favorited"` // 当前用户是否收藏
-}
-
-// CreatePostRequest 创建帖子请求
-type CreatePostRequest struct {
-	UserID     int64    `json:"user_id" binding:"required"`
-	DiseaseID  *int64   `json:"disease_id"`
-	CategoryID *int64   `json:"category_id"`
-	Type       string   `json:"type" binding:"required,oneof=help experience emotion info"`
-	Title      *string  `json:"title"`
-	Content    string   `json:"content" binding:"required"`
-	Images     []string `json:"images"`
-}
-
-// UpdatePostRequest 更新帖子请求
-type UpdatePostRequest struct {
-	Title      *string   `json:"title"`
-	Content    *string   `json:"content"`
-	Images     *[]string `json:"images"` // 使用指针以便判断是否传参
-	DiseaseID  *int64    `json:"disease_id"`
-	CategoryID *int64    `json:"category_id"`
-	Type       *string   `json:"type" binding:"omitempty,oneof=help experience emotion info"`
-
-	// 以下字段通常仅管理员可更新，实际项目中应结合权限中间件判断
-	IsTop        *int8   `json:"is_top"`
-	IsRecommend  *int8   `json:"is_recommend"`
-	Status       *int8   `json:"status"`
-	RejectReason *string `json:"reject_reason"`
 }
 
 // --- Handler 实现 ---
@@ -1177,7 +730,7 @@ func GetCommunityPosts(c *gin.Context) {
 	err := db.MySQL.QueryRow(countQuery, args...).Scan(&total)
 	if err != nil {
 		fmt.Printf("Count query error: %v\n", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "查询总数失败"})
+		respondInternalError(c, "查询总数失败")
 		return
 	}
 
@@ -1210,14 +763,13 @@ func GetCommunityPosts(c *gin.Context) {
 	rows, err := db.MySQL.Query(listQuery, args...)
 	if err != nil {
 		fmt.Printf("List query error: %v\n", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "查询帖子列表失败"})
+		respondInternalError(c, "查询帖子列表失败")
 		return
 	}
 	defer rows.Close()
 
 	var records []PostResponse
-	// 假设当前用户ID已从中件件获取，否则默认为0，不显示点赞/收藏状态
-	currentUserID := int64(0) // TODO: 从 Context 获取真实用户ID
+	currentUserID, _ := middleware.GetUserID(c)
 
 	for rows.Next() {
 		var p PostResponse
@@ -1274,16 +826,7 @@ func GetCommunityPosts(c *gin.Context) {
 		records = append(records, p)
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code":    200,
-		"message": "success",
-		"data": gin.H{
-			"records": records,
-			"total":   total,
-			"page":    page,
-			"limit":   limit,
-		},
-	})
+	respondPage(c, records, total, page, limit)
 }
 
 // GetPostDetail 获取帖子详情
@@ -1291,7 +834,7 @@ func GetPostDetail(c *gin.Context) {
 	postIDStr := c.Param("id")
 	id, err := strconv.ParseInt(postIDStr, 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": "无效的帖子 ID"})
+		respondBadRequest(c, "无效的帖子 ID")
 		return
 	}
 
@@ -1328,10 +871,10 @@ func GetPostDetail(c *gin.Context) {
 
 	if err != nil {
 		if err == sql.ErrNoRows {
-			c.JSON(http.StatusNotFound, gin.H{"code": 404, "message": "帖子不存在"})
+			respondNotFound(c, "帖子不存在")
 		} else {
 			fmt.Printf("Query post detail error: %v\n", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "查询失败"})
+			respondInternalError(c, "查询失败")
 		}
 		return
 	}
@@ -1359,8 +902,7 @@ func GetPostDetail(c *gin.Context) {
 		p.Images = []string{}
 	}
 
-	// 获取当前用户互动状态
-	currentUserID := int64(0) // TODO: 从 Context 获取
+	currentUserID, _ := middleware.GetUserID(c)
 	p.IsLiked = false
 	p.IsFavorited = false
 
@@ -1372,168 +914,63 @@ func GetPostDetail(c *gin.Context) {
 		p.IsFavorited = favCnt > 0
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code":    200,
-		"message": "success",
-		"data":    p,
-	})
+	respondOK(c, p)
 }
 
 // CreatePost 创建帖子
 func CreatePost(c *gin.Context) {
+	userID, ok := middleware.MustGetUserID(c)
+	if !ok {
+		return
+	}
 	var req CreatePostRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": "参数错误: " + err.Error()})
+		respondBadRequest(c, "参数错误")
 		return
 	}
-
-	// 处理图片 JSON
-	imagesJSON, _ := json.Marshal(req.Images)
-	if req.Images == nil {
-		imagesJSON = []byte("[]")
-	}
-
-	// 插入数据
-	// status 默认为 0 (审核中)，如果需要直接发布改为 1
-	query := `
-		INSERT INTO post (
-			user_id, disease_id, category_id, type, title, content, images, 
-			view_count, like_count, comment_count, favorite_count,
-			is_top, is_recommend, status
-		) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0, 0, 0)
-	`
-	res, err := db.MySQL.Exec(query,
-		req.UserID, req.DiseaseID, req.CategoryID, req.Type, req.Title, req.Content, string(imagesJSON),
-	)
-	if err != nil {
-		fmt.Printf("Insert post error: %v\n", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "创建帖子失败"})
-		return
-	}
-
-	postID, _ := res.LastInsertId()
-
-	c.JSON(http.StatusOK, gin.H{
-		"code":    200,
-		"message": "创建成功",
-		"data":    gin.H{"post_id": postID},
+	postID, err := postSvc.Create(domain.CreatePostInput{
+		UserID: userID, DiseaseID: req.DiseaseID, CategoryID: req.CategoryID,
+		Type: req.Type, Title: req.Title, Content: req.Content, Images: req.Images,
 	})
+	if err != nil {
+		respondServiceError(c, err)
+		return
+	}
+respondCreated(c, "创建成功", gin.H{"post_id": postID})
 }
 
 // UpdatePost 更新帖子
 func UpdatePost(c *gin.Context) {
-	postIDStr := c.Param("id")
-	id, err := strconv.ParseInt(postIDStr, 10, 64)
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": "无效的帖子 ID"})
+		respondBadRequest(c, "无效的帖子 ID")
 		return
 	}
-
 	var req UpdatePostRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": "参数错误"})
+		respondBadRequest(c, "参数错误")
 		return
 	}
-
-	// 1. 权限检查：获取帖子所有者
-	currentUserID := int64(1001) // TODO: 从 JWT 获取
-	var postUserID int64
-	var postStatus int
-	err = db.MySQL.QueryRow("SELECT user_id, status FROM post WHERE id = ?", id).Scan(&postUserID, &postStatus)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			c.JSON(http.StatusNotFound, gin.H{"code": 404, "message": "帖子不存在"})
-		} else {
-			c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "查询失败"})
-		}
+	currentUserID, ok := middleware.MustGetUserID(c)
+	if !ok {
 		return
 	}
-
-	// 简单权限判断：如果是普通用户，只能改自己的帖子，且不能改状态/置顶等敏感字段
-	// 如果是管理员，可以改所有字段。这里简化处理，假设 currentUserID == postUserID 为作者
-	isAdmin := false // TODO: 判断是否为管理员
-	if !isAdmin && currentUserID != postUserID {
-		c.JSON(http.StatusForbidden, gin.H{"code": 403, "message": "无权限修改"})
+	isAdmin := middleware.IsAdmin(c)
+	if err := postSvc.Update(id, currentUserID, isAdmin, domain.UpdatePostInput{
+		Title: req.Title, Content: req.Content, Images: req.Images,
+		DiseaseID: req.DiseaseID, CategoryID: req.CategoryID, Type: req.Type,
+		IsTop: req.IsTop, IsRecommend: req.IsRecommend, Status: req.Status, RejectReason: req.RejectReason,
+	}); err != nil {
+		if errors.Is(err, domain.ErrForbidden) {
+			respondForbidden(c, "无权限修改")
+			return
+		}
+		if errors.Is(err, domain.ErrNoUpdateFields) {
+			respondBadRequest(c, "未提供有效更新字段")
+			return
+		}
+		respondServiceError(c, err)
 		return
 	}
-
-	// 2. 构建动态更新 SQL
-	updateFields := []string{}
-	updateArgs := []interface{}{}
-
-	// 基础字段
-	if req.Title != nil {
-		updateFields = append(updateFields, "title = ?")
-		updateArgs = append(updateArgs, *req.Title)
-	}
-	if req.Content != nil {
-		updateFields = append(updateFields, "content = ?")
-		updateArgs = append(updateArgs, *req.Content)
-	}
-	if req.Images != nil {
-		imgJSON, _ := json.Marshal(*req.Images)
-		updateFields = append(updateFields, "images = ?")
-		updateArgs = append(updateArgs, string(imgJSON))
-	}
-	if req.DiseaseID != nil {
-		updateFields = append(updateFields, "disease_id = ?")
-		updateArgs = append(updateArgs, *req.DiseaseID)
-	}
-	if req.CategoryID != nil {
-		updateFields = append(updateFields, "category_id = ?")
-		updateArgs = append(updateArgs, *req.CategoryID)
-	}
-	if req.Type != nil {
-		updateFields = append(updateFields, "type = ?")
-		updateArgs = append(updateArgs, *req.Type)
-	}
-
-	// 管理/敏感字段 (仅管理员或特定条件下允许)
-	if isAdmin {
-		if req.IsTop != nil {
-			updateFields = append(updateFields, "is_top = ?")
-			updateArgs = append(updateArgs, *req.IsTop)
-		}
-		if req.IsRecommend != nil {
-			updateFields = append(updateFields, "is_recommend = ?")
-			updateArgs = append(updateArgs, *req.IsRecommend)
-		}
-		if req.Status != nil {
-			updateFields = append(updateFields, "status = ?")
-			updateArgs = append(updateArgs, *req.Status)
-		}
-		if req.RejectReason != nil {
-			updateFields = append(updateFields, "reject_reason = ?")
-			updateArgs = append(updateArgs, *req.RejectReason)
-		}
-	} else {
-		// 普通用户不允许修改后，如果之前被驳回，修改后状态应变回“审核中”(0) 或保持“正常”(1)?
-		// 业务逻辑决定：通常修改后重新审核
-		if postStatus == 2 { // 如果被驳回，修改后重置为审核中
-			updateFields = append(updateFields, "status = ?")
-			updateArgs = append(updateArgs, 0)
-		}
-	}
-
-	if len(updateFields) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": "未提供有效更新字段"})
-		return
-	}
-
-	// 添加更新时间
-	updateFields = append(updateFields, "updated_at = ?")
-	updateArgs = append(updateArgs, time.Now())
-
-	// 添加 Where 条件
-	updateArgs = append(updateArgs, id)
-
-	sqlStr := "UPDATE post SET " + strings.Join(updateFields, ", ") + " WHERE id = ?"
-	_, err = db.MySQL.Exec(sqlStr, updateArgs...)
-	if err != nil {
-		fmt.Printf("Update post error: %v\n", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "更新失败"})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"code": 200, "message": "success"})
+	respondOK(c, nil)
 }

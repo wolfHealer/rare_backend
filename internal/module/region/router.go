@@ -1,19 +1,24 @@
 package region
 
-import "github.com/gin-gonic/gin"
+import (
+	"rare_backend/internal/middleware"
+
+	"github.com/gin-gonic/gin"
+)
 
 func Register(r *gin.RouterGroup) {
 	region := r.Group("/region")
 
-	// 基础 CRUD
-	region.POST("", CreateRegion)       // 新增
-	region.GET("/:id", GetRegionDetail) // 【新增】查看详情
-	region.PUT("/:id", UpdateRegion)    // 修改
-	region.DELETE("/:id", DeleteRegion) // 删除
+	// 公开读（固定路径须在 /:id 之前）
+	region.GET("/list", GetRegionList)
+	region.GET("/tree", GetRegionTree)
+	region.GET("/province-city-tree", GetProvinceCityTree)
+	region.GET("/:id", GetRegionDetail)
 
-	// 查询接口
-	region.GET("/list", GetRegionList)                     // 通用列表查询
-	region.GET("/tree", GetRegionTree)                     // 三级树形结构查询
-	region.GET("/province-city-tree", GetProvinceCityTree) // 【新增】省市两级树形结构查询
-
+	// 后台写（管理员）
+	admin := region.Group("")
+	admin.Use(middleware.AdminWrite()...)
+	admin.POST("", CreateRegion)
+	admin.PUT("/:id", UpdateRegion)
+	admin.DELETE("/:id", DeleteRegion)
 }

@@ -1,34 +1,33 @@
 package medical
 
 import (
+	"rare_backend/internal/middleware"
+
 	"github.com/gin-gonic/gin"
 )
 
-// 参数类型改为 *gin.RouterGroup 以支持嵌套
 func SetupMedicalRoutes(r *gin.RouterGroup) {
 	medical := r.Group("/medical")
 
-	// 检查手册
-	medical.GET("/examinations", GetExaminationList)       // 检查手册列表
-	medical.GET("/examinations/:id", GetExaminationDetail) // 检查手册详情
-	medical.POST("/examinations", CreateExamination)       // 新增检查手册
-	medical.PUT("/examinations/:id", UpdateExamination)    // 修改检查手册
-	medical.DELETE("/examinations/:id", DeleteExamination) // 删除检查手册
-
-	// 医生相关
-	medical.POST("/doctors", CreateDoctor)       // 新增医生
-	medical.GET("/doctors", GetDoctorList)       // 医生列表
-	medical.GET("/doctors/:id", GetDoctorDetail) // 医生详情
-	medical.PUT("/doctors/:id", UpdateDoctor)    // 修改医生
-	medical.DELETE("/doctors/:id", DeleteDoctor) // 删除医生
-
-	// 医院相关
-	// 新增：医院下拉选项接口
+	// 公开读
+	medical.GET("/examinations", GetExaminationList)
+	medical.GET("/examinations/:id", GetExaminationDetail)
+	medical.GET("/doctors", GetDoctorList)
+	medical.GET("/doctors/:id", GetDoctorDetail)
 	medical.GET("/hospitals/options", GetHospitalOptions)
-	medical.POST("/hospitals", CreateHospital)       // 新增医院
-	medical.GET("/hospitals", GetHospitalList)       // 医院列表
-	medical.GET("/hospitals/:id", GetHospitalDetail) // 医院详情
-	medical.PUT("/hospitals/:id", UpdateHospital)    // 修改医院
-	medical.DELETE("/hospitals/:id", DeleteHospital) // 删除医院
+	medical.GET("/hospitals", GetHospitalList)
+	medical.GET("/hospitals/:id", GetHospitalDetail)
 
+	// 后台写（管理员）
+	admin := medical.Group("")
+	admin.Use(middleware.AdminWrite()...)
+	admin.POST("/examinations", CreateExamination)
+	admin.PUT("/examinations/:id", UpdateExamination)
+	admin.DELETE("/examinations/:id", DeleteExamination)
+	admin.POST("/doctors", CreateDoctor)
+	admin.PUT("/doctors/:id", UpdateDoctor)
+	admin.DELETE("/doctors/:id", DeleteDoctor)
+	admin.POST("/hospitals", CreateHospital)
+	admin.PUT("/hospitals/:id", UpdateHospital)
+	admin.DELETE("/hospitals/:id", DeleteHospital)
 }

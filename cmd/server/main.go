@@ -2,7 +2,10 @@ package main
 
 import (
 	"log"
+
+	"rare_backend/internal/config"
 	"rare_backend/internal/pkg/db"
+	"rare_backend/internal/pkg/jwt"
 	"rare_backend/internal/router"
 
 	"github.com/gin-contrib/cors"
@@ -10,33 +13,37 @@ import (
 )
 
 func main() {
-	// 1. 创建 Gin 实例
-	r := gin.Default()
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("[config] %v", err)
+	}
 
-	// 2. 配置 CORS 中间件
-	config := cors.DefaultConfig()
-	config.AllowOrigins = []string{
-		"http://localhost:5174",
-		"http://localhost:5173",
-		"http://127.0.0.1:5174",
-	} // 允许的前端域名
-	config.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"}
-	config.AllowHeaders = []string{"Origin", "Content-Type", "Authorization"}
-	r.Use(cors.New(config))
-
-	// 3. 注册路由（关键）
-	router.Register(r)
-
-	// 4. 初始化数据库
-	if err := db.InitMySQL("root:love1357hb@tcp(127.0.0.1:3306)/rare_backend?parseTime=true"); err != nil {
+	// 1. 初始化数据库（必须在注册路由、处理请求之前）
+	if err := db.InitMySQL(cfg.MySQLDSN); err != nil {
 		log.Fatalf("mysql init: %v", err)
 	}
-	// if err := db.InitMongo("mongodb://localhost:27017"); err != nil {
-	// 	log.Fatalf("mongo init: %v", err)
-	// }
 
-	// 5️. 启动服务
-	if err := r.Run(":8080"); err != nil {
+	// 2. 初始化 JWT
+	if err := jwt.Init(cfg.JWTSecret, cfg.JWTExpire); err != nil {
+		log.Fatalf("jwt init: %v", err)
+	}
+
+	gin.SetMode(cfg.GinMode)
+	r := gin.Default()
+
+	// 3. CORS
+	corsCfg := cors.DefaultConfig()
+	corsCfg.AllowOrigins = cfg.CORSAllowOrigins
+	corsCfg.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"}
+	corsCfg.AllowHeaders = []string{"Origin", "Content-Type", "Authorization"}
+	r.Use(cors.New(corsCfg))
+
+	// 4. 注册路由
+	router.Register(r)
+
+	// 5. 启动服务
+	log.Printf("server listening on %s", cfg.ServerAddr)
+	if err := r.Run(cfg.ServerAddr); err != nil {
 		log.Fatalf("server start failed: %v", err)
 	}
 }

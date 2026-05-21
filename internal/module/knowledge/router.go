@@ -1,36 +1,39 @@
 package knowledge
 
-import "github.com/gin-gonic/gin"
+import (
+	"rare_backend/internal/middleware"
+
+	"github.com/gin-gonic/gin"
+)
 
 func Register(r *gin.RouterGroup) {
-	knowledge := r.Group("/knowledge")
+	k := r.Group("/knowledge")
 
-	knowledge.GET("/diseases", GetDiseases)
-	knowledge.GET("/diseases/search", SearchDiseases)
-	// 【新增】疾病下拉选项接口
-	knowledge.GET("/diseases/options", GetDiseaseOptions)
+	// 公开读
+	k.GET("/diseases", GetDiseases)
+	k.GET("/diseases/search", SearchDiseases)
+	k.GET("/diseases/options", GetDiseaseOptions)
+	k.GET("/disease/:id", GetDiseaseByID)
+	k.GET("/categories", GetCategories)
+	k.GET("/categories/tree", GetCategoryTree)
+	k.GET("/category/:categoryId/diseases", GetDiseasesByCategory)
+	k.GET("/tags", GetTags)
+	k.GET("/articles", GetArticles)
+	k.GET("/article/:id", GetArticleByID)
 
-	knowledge.POST("/disease", CreateDisease)
-	knowledge.GET("/disease/:id", GetDiseaseByID)
-	knowledge.PUT("/disease/:id", UpdateDisease)
-	knowledge.DELETE("/disease/:id", DeleteDisease)
-
-	knowledge.GET("/categories", GetCategories)
-	knowledge.GET("/categories/tree", GetCategoryTree)
-	knowledge.POST("/category", CreateCategory)
-	knowledge.PUT("/category/:id", UpdateCategory)
-	knowledge.GET("/category/:categoryId/diseases", GetDiseasesByCategory)
-	knowledge.DELETE("/category/:id", DeleteCategory)
-
-	knowledge.GET("/tags", GetTags)
-	knowledge.POST("/tag", CreateTag)
-	knowledge.PUT("/tag/:id", UpdateTag)
-	knowledge.DELETE("/tag/:id", DeleteTag)
-
-	// --- 新增：文章管理路由 ---
-	knowledge.GET("/articles", GetArticles)         // 文章列表
-	knowledge.POST("/article", CreateArticle)       // 创建文章
-	knowledge.GET("/article/:id", GetArticleByID)   // 文章详情
-	knowledge.PUT("/article/:id", UpdateArticle)    // 更新文章
-	knowledge.DELETE("/article/:id", DeleteArticle) // 删除文章
+	// 后台写（管理员）
+	admin := k.Group("")
+	admin.Use(middleware.AdminWrite()...)
+	admin.POST("/disease", CreateDisease)
+	admin.PUT("/disease/:id", UpdateDisease)
+	admin.DELETE("/disease/:id", DeleteDisease)
+	admin.POST("/category", CreateCategory)
+	admin.PUT("/category/:id", UpdateCategory)
+	admin.DELETE("/category/:id", DeleteCategory)
+	admin.POST("/tag", CreateTag)
+	admin.PUT("/tag/:id", UpdateTag)
+	admin.DELETE("/tag/:id", DeleteTag)
+	admin.POST("/article", CreateArticle)
+	admin.PUT("/article/:id", UpdateArticle)
+	admin.DELETE("/article/:id", DeleteArticle)
 }

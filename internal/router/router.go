@@ -2,10 +2,11 @@ package router
 
 import (
 	"rare_backend/internal/module/auth"
-	post "rare_backend/internal/module/community"
+	"rare_backend/internal/module/community"
 	"rare_backend/internal/module/knowledge"
 	"rare_backend/internal/module/region"
 	"rare_backend/internal/module/resource"
+	"rare_backend/internal/pkg/response"
 
 	"github.com/gin-gonic/gin"
 )
@@ -13,7 +14,7 @@ import (
 func Register(r *gin.Engine) {
 	// 健康检查（最先）
 	r.GET("/health", func(c *gin.Context) {
-		c.JSON(200, gin.H{"status": "ok"})
+		response.OK(c, gin.H{"status": "ok"})
 	})
 
 	// API 分组
@@ -23,7 +24,7 @@ func Register(r *gin.Engine) {
 	auth.Register(api)
 
 	// ===== post 模块 =====
-	post.Register(api)
+	community.Register(api)
 
 	// ===== knowledge 模块 =====
 	knowledge.Register(api)

@@ -1,14 +1,19 @@
 package auth
 
-import "github.com/gin-gonic/gin"
+import (
+	"rare_backend/internal/middleware"
+
+	"github.com/gin-gonic/gin"
+)
 
 func Register(r *gin.RouterGroup) {
 	auth := r.Group("/auth")
 	auth.POST("/login", login)
 	auth.POST("/register", register)
 
-	// 新增用户管理路由
+	// 用户管理（需管理员）
 	users := r.Group("/system/users")
+	users.Use(middleware.AuthRequired(), middleware.AdminRequired())
 	users.POST("", CreateUser)
 	users.GET("", GetUserList)       // GET /api/auth/users?page=1&pageSize=10&keyword=xxx
 	users.GET("/:id", GetUserByID)   // GET /api/auth/users/123
