@@ -9,7 +9,7 @@
 | `schema_reference.sql` | mysqldump 结构快照，**只读参考**，勿在有数据的库上执行 |
 | `000001_baseline.up.sql` | 初始建表（由 reference 自动生成） |
 | `000001_baseline.down.sql` | 回滚 baseline（DROP 全部表，仅 dev/test） |
-| `000002_*.up/down.sql` | 后续增量变更（手工新增） |
+| `000002_*.up/down.sql` | 列表/JOIN 复合索引 + FULLTEXT（ngram）关键词搜索 |
 
 重新生成 baseline：
 

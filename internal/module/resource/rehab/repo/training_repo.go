@@ -6,6 +6,7 @@ import (
 
 	"rare_backend/internal/module/resource/rehab/domain"
 	"rare_backend/internal/pkg/db"
+	"rare_backend/internal/pkg/search"
 )
 
 type TrainingRepo struct{}
@@ -34,8 +35,10 @@ func (r *TrainingRepo) buildListWhere(filter domain.TrainingListFilter) (string,
 		args = append(args, filter.RehabStage)
 	}
 	if filter.Keyword != "" {
-		whereConditions = append(whereConditions, "g.title LIKE ?")
-		args = append(args, "%"+filter.Keyword+"%")
+		if cond, arg, ok := search.MatchCondition("g.title", filter.Keyword); ok {
+			whereConditions = append(whereConditions, cond)
+			args = append(args, arg)
+		}
 	}
 
 	whereClause := ""

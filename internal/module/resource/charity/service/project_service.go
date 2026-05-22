@@ -26,9 +26,15 @@ func (s *ProjectService) List(filter domain.ProjectListFilter) (*domain.ProjectL
 		return nil, domain.ErrQueryList
 	}
 
+	projectIDs := make([]uint, 0, len(rows))
+	for _, row := range rows {
+		projectIDs = append(projectIDs, row.ID)
+	}
+	diseaseMap, _ := s.repo.ListDiseaseIDsByProjectIDs(projectIDs)
+
 	list := make([]domain.ProjectItem, 0, len(rows))
 	for _, row := range rows {
-		diseaseIds, _ := s.repo.ListDiseaseIDs(row.ID)
+		diseaseIds := diseaseMap[row.ID]
 		if diseaseIds == nil {
 			diseaseIds = []int{}
 		}

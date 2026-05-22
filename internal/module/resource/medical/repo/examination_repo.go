@@ -7,6 +7,7 @@ import (
 
 	"rare_backend/internal/module/resource/medical/domain"
 	"rare_backend/internal/pkg/db"
+	"rare_backend/internal/pkg/search"
 )
 
 type ExaminationRepo struct {
@@ -59,8 +60,10 @@ func (r *ExaminationRepo) buildListWhere(filter domain.ExaminationListFilter) (s
 	}
 
 	if filter.Keyword != "" {
-		whereClause += " AND (em.exam_name LIKE ? OR em.exam_purpose LIKE ?)"
-		args = append(args, "%"+filter.Keyword+"%", "%"+filter.Keyword+"%")
+		if clause, arg, ok := search.MatchClause("em.exam_name, em.exam_purpose", filter.Keyword); ok {
+			whereClause += clause
+			args = append(args, arg)
+		}
 	}
 
 	if filter.ExamType != "" {

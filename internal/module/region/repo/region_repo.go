@@ -6,6 +6,7 @@ import (
 
 	"rare_backend/internal/module/region/domain"
 	"rare_backend/internal/pkg/db"
+	"rare_backend/internal/pkg/search"
 )
 
 type RegionRepo struct{}
@@ -107,8 +108,14 @@ func (r *RegionRepo) List(filter domain.RegionListFilter) (*domain.RegionListRes
 		args = append(args, filter.IsEnabled)
 	}
 	if filter.Keyword != "" {
-		whereClause += " AND (name LIKE ? OR full_name LIKE ? OR code LIKE ?)"
-		args = append(args, "%"+filter.Keyword+"%", "%"+filter.Keyword+"%", "%"+filter.Keyword+"%")
+		kw := search.Trim(filter.Keyword)
+		if search.Usable(kw) {
+			whereClause += " AND (MATCH(name, full_name) AGAINST(? IN NATURAL LANGUAGE MODE) OR code LIKE ?)"
+			args = append(args, kw, kw+"%")
+		} else if kw != "" {
+			whereClause += " AND code LIKE ?"
+			args = append(args, kw+"%")
+		}
 	}
 
 	var total int64

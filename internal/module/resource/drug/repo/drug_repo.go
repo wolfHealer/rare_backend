@@ -8,6 +8,7 @@ import (
 
 	"rare_backend/internal/module/resource/drug/domain"
 	"rare_backend/internal/pkg/db"
+	"rare_backend/internal/pkg/search"
 )
 
 type DrugRepo struct{}
@@ -68,8 +69,10 @@ func (r *DrugRepo) buildListWhere(filter domain.DrugListFilter) (string, []inter
 	}
 
 	if filter.Keyword != "" {
-		whereClause += " AND (d.generic_name LIKE ? OR d.brand_name LIKE ?)"
-		args = append(args, "%"+filter.Keyword+"%", "%"+filter.Keyword+"%")
+		if clause, arg, ok := search.MatchClause("d.generic_name, d.brand_name", filter.Keyword); ok {
+			whereClause += clause
+			args = append(args, arg)
+		}
 	}
 	if filter.DrugType != "" {
 		whereClause += " AND d.drug_type = ?"
@@ -312,8 +315,10 @@ func (r *DrugRepo) buildExportWhere(filter domain.DrugExportFilter) (string, []i
 		args = append(args, filter.DiseaseID)
 	}
 	if filter.Keyword != "" {
-		whereClause += " AND (d.generic_name LIKE ? OR d.brand_name LIKE ?)"
-		args = append(args, "%"+filter.Keyword+"%", "%"+filter.Keyword+"%")
+		if clause, arg, ok := search.MatchClause("d.generic_name, d.brand_name", filter.Keyword); ok {
+			whereClause += clause
+			args = append(args, arg)
+		}
 	}
 	if filter.TypeFilter != "" {
 		whereClause += " AND d.drug_type = ?"

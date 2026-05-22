@@ -5,6 +5,7 @@ import (
 
 	"rare_backend/internal/module/resource/rehab/domain"
 	"rare_backend/internal/pkg/db"
+	"rare_backend/internal/pkg/search"
 )
 
 type InstitutionRepo struct{}
@@ -42,8 +43,10 @@ func (r *InstitutionRepo) buildListWhereFull(filter domain.InstitutionListFilter
 		args = append(args, filter.DiseaseID)
 	}
 	if filter.Keyword != "" {
-		whereConditions = append(whereConditions, "(i.name LIKE ? OR i.address LIKE ?)")
-		args = append(args, "%"+filter.Keyword+"%", "%"+filter.Keyword+"%")
+		if cond, arg, ok := search.MatchCondition("i.name, i.address", filter.Keyword); ok {
+			whereConditions = append(whereConditions, cond)
+			args = append(args, arg)
+		}
 	}
 
 	whereClause := ""

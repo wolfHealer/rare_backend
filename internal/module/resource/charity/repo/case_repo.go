@@ -6,6 +6,7 @@ import (
 
 	"rare_backend/internal/module/resource/charity/domain"
 	"rare_backend/internal/pkg/db"
+	"rare_backend/internal/pkg/search"
 )
 
 type CaseRepo struct{}
@@ -57,8 +58,10 @@ func (r *CaseRepo) buildListWhere(filter domain.CaseListFilter) (string, []inter
 		args = append(args, filter.DiseaseID)
 	}
 	if filter.Keyword != "" {
-		whereClause += " AND (rc.case_title LIKE ? OR rc.patient_desc LIKE ?)"
-		args = append(args, "%"+filter.Keyword+"%", "%"+filter.Keyword+"%")
+		if clause, arg, ok := search.MatchClause("rc.case_title, rc.patient_desc", filter.Keyword); ok {
+			whereClause += clause
+			args = append(args, arg)
+		}
 	}
 	return whereClause, args
 }

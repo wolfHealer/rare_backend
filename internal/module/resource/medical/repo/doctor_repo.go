@@ -2,11 +2,12 @@ package repo
 
 import (
 	"database/sql"
-	"fmt"
+	"log"
 	"strconv"
 
 	"rare_backend/internal/module/resource/medical/domain"
 	"rare_backend/internal/pkg/db"
+	"rare_backend/internal/pkg/search"
 )
 
 type DoctorRepo struct {
@@ -78,8 +79,10 @@ func (r *DoctorRepo) buildListWhere(filter domain.DoctorListFilter) (string, []i
 	}
 
 	if filter.Keyword != "" {
-		whereClause += " AND (d.name LIKE ? OR d.good_at LIKE ?)"
-		args = append(args, "%"+filter.Keyword+"%", "%"+filter.Keyword+"%")
+		if clause, arg, ok := search.MatchClause("d.name, d.good_at", filter.Keyword); ok {
+			whereClause += clause
+			args = append(args, arg)
+		}
 	}
 
 	if filter.Title != "" {
@@ -146,7 +149,7 @@ func (r *DoctorRepo) List(filter domain.DoctorListFilter) ([]doctorListRow, erro
 			&doc.ID, &doc.Name, &doc.Title, &doc.Department, &doc.GoodAt, &doc.ClinicTime, &doc.Contact, &doc.Score, &doc.CommentNum,
 			&doc.HospitalName, &doc.ProvinceCode, &doc.CityCode, &doc.DistrictCode, &doc.ProvinceName, &doc.CityName, &doc.DistrictName,
 			&doc.Level, &doc.IsRareNetwork, &doc.AuditStatus); err != nil {
-			fmt.Println("Scan error:", err)
+			log.Printf("[medical] scan doctor row error: %v", err)
 			continue
 		}
 		list = append(list, doc)

@@ -8,6 +8,7 @@ import (
 
 	"rare_backend/internal/module/knowledge/domain"
 	"rare_backend/internal/pkg/db"
+	"rare_backend/internal/pkg/search"
 )
 
 type DiseaseRepo struct{}
@@ -361,8 +362,10 @@ func (r *DiseaseRepo) List(filter domain.DiseaseListFilter) (*domain.DiseaseList
 	}
 
 	if filter.Keyword != "" {
-		whereConditions = append(whereConditions, "(d.name LIKE ? OR d.alias LIKE ?)")
-		args = append(args, "%"+filter.Keyword+"%", "%"+filter.Keyword+"%")
+		if cond, arg, ok := search.MatchCondition("d.name, d.alias", filter.Keyword); ok {
+			whereConditions = append(whereConditions, cond)
+			args = append(args, arg)
+		}
 	}
 
 	hasJoinCategory := false
@@ -529,8 +532,14 @@ func (r *DiseaseRepo) ListByCategory(filter domain.DiseasesByCategoryFilter) (*d
 }
 
 func (r *DiseaseRepo) Search(keyword string, page, pageSize int) (*domain.SearchDiseasesResult, error) {
-	whereClause := "WHERE status = 1 AND (name LIKE ? OR alias LIKE ?)"
-	args := []interface{}{"%" + keyword + "%", "%" + keyword + "%"}
+	whereClause := "WHERE status = 1"
+	args := []interface{}{}
+	if cond, arg, ok := search.MatchCondition("name, alias", keyword); ok {
+		whereClause += " AND " + cond
+		args = append(args, arg)
+	} else {
+		return &domain.SearchDiseasesResult{List: []domain.SimpleDiseaseItem{}}, nil
+	}
 
 	countQuery := "SELECT COUNT(*) FROM disease " + whereClause
 	var total int64
@@ -581,8 +590,10 @@ func (r *DiseaseRepo) Options(keyword string) ([]domain.DiseaseOptionItem, error
 	whereClause := "WHERE status = 1"
 	args := []interface{}{}
 	if keyword != "" {
-		whereClause += " AND (name LIKE ? OR alias LIKE ?)"
-		args = append(args, "%"+keyword+"%", "%"+keyword+"%")
+		if cond, arg, ok := search.MatchCondition("name, alias", keyword); ok {
+			whereClause += " AND " + cond
+			args = append(args, arg)
+		}
 	}
 
 	query := `

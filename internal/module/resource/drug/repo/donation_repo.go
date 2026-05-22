@@ -6,6 +6,7 @@ import (
 
 	"rare_backend/internal/module/resource/drug/domain"
 	"rare_backend/internal/pkg/db"
+	"rare_backend/internal/pkg/search"
 )
 
 type DonationRepo struct{}
@@ -82,12 +83,20 @@ func (r *DonationRepo) buildListWhere(filter domain.DonationListFilter) (string,
 		whereClause += " AND p.audit_status = 1"
 	}
 	if filter.Organizer != "" {
-		whereClause += " AND p.organizer LIKE ?"
-		args = append(args, "%"+filter.Organizer+"%")
+		if clause, arg, ok := search.MatchClause("p.organizer", filter.Organizer); ok {
+			whereClause += clause
+			args = append(args, arg)
+		}
 	}
 	if filter.Keyword != "" {
-		whereClause += " AND (p.name LIKE ? OR d.brand_name LIKE ? OR d.generic_name LIKE ?)"
-		args = append(args, "%"+filter.Keyword+"%", "%"+filter.Keyword+"%", "%"+filter.Keyword+"%")
+		kw := search.Trim(filter.Keyword)
+		if search.Usable(kw) {
+			whereClause += ` AND (
+				MATCH(p.name, p.organizer) AGAINST(? IN NATURAL LANGUAGE MODE)
+				OR MATCH(d.generic_name, d.brand_name) AGAINST(? IN NATURAL LANGUAGE MODE)
+			)`
+			args = append(args, kw, kw)
+		}
 	}
 	if filter.DiseaseID != 0 {
 		whereClause += " AND p.disease_id = ?"

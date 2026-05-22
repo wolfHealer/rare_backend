@@ -2,6 +2,8 @@ package repo
 
 import (
 	"database/sql"
+	"fmt"
+	"strings"
 
 	"rare_backend/internal/module/resource/medical/domain"
 	"rare_backend/internal/pkg/db"
@@ -58,6 +60,33 @@ func (r *DiseaseRelRepo) GetDiseaseIDsByDoctor(doctorID uint64) ([]uint64, error
 	return ids, nil
 }
 
+func (r *DiseaseRelRepo) ListDiseaseIDsByDoctorIDs(doctorIDs []uint64) (map[uint64][]uint64, error) {
+	result := make(map[uint64][]uint64)
+	if len(doctorIDs) == 0 {
+		return result, nil
+	}
+
+	placeholders, args := buildInPlaceholders(doctorIDs)
+	query := fmt.Sprintf(
+		"SELECT doctor_id, disease_id FROM doctor_disease_rel WHERE doctor_id IN (%s)",
+		strings.Join(placeholders, ","),
+	)
+	rows, err := db.MySQL.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var doctorID, diseaseID uint64
+		if err := rows.Scan(&doctorID, &diseaseID); err != nil {
+			continue
+		}
+		result[doctorID] = append(result[doctorID], diseaseID)
+	}
+	return result, rows.Err()
+}
+
 func (r *DiseaseRelRepo) GetDiseaseDetailsByDoctor(doctorID uint64) ([]domain.DiseaseSimpleInfo, error) {
 	query := `
 		SELECT d.id, d.name, d.alias 
@@ -101,6 +130,33 @@ func (r *DiseaseRelRepo) GetDiseaseIDsByExamManual(manualID uint64) ([]uint64, e
 		ids = append(ids, id)
 	}
 	return ids, nil
+}
+
+func (r *DiseaseRelRepo) ListDiseaseIDsByExamManualIDs(manualIDs []uint64) (map[uint64][]uint64, error) {
+	result := make(map[uint64][]uint64)
+	if len(manualIDs) == 0 {
+		return result, nil
+	}
+
+	placeholders, args := buildInPlaceholders(manualIDs)
+	query := fmt.Sprintf(
+		"SELECT exam_manual_id, disease_id FROM exam_manual_disease_rel WHERE exam_manual_id IN (%s)",
+		strings.Join(placeholders, ","),
+	)
+	rows, err := db.MySQL.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var manualID, diseaseID uint64
+		if err := rows.Scan(&manualID, &diseaseID); err != nil {
+			continue
+		}
+		result[manualID] = append(result[manualID], diseaseID)
+	}
+	return result, rows.Err()
 }
 
 func (r *DiseaseRelRepo) InsertHospitalDiseaseRel(tx *sql.Tx, hospitalID uint64, diseaseIDs []uint64) error {
@@ -158,4 +214,14 @@ func (r *DiseaseRelRepo) DeleteDoctorDiseaseRel(tx *sql.Tx, doctorID uint64) err
 func (r *DiseaseRelRepo) DeleteExamManualDiseaseRel(tx *sql.Tx, manualID uint64) error {
 	_, err := tx.Exec("DELETE FROM exam_manual_disease_rel WHERE exam_manual_id = ?", manualID)
 	return err
+}
+
+func buildInPlaceholders(ids []uint64) ([]string, []interface{}) {
+	placeholders := make([]string, len(ids))
+	args := make([]interface{}, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	return placeholders, args
 }

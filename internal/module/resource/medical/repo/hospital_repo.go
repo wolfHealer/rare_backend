@@ -7,6 +7,7 @@ import (
 
 	"rare_backend/internal/module/resource/medical/domain"
 	"rare_backend/internal/pkg/db"
+	"rare_backend/internal/pkg/search"
 )
 
 type HospitalRepo struct {
@@ -41,8 +42,10 @@ func (r *HospitalRepo) buildListWhere(filter domain.HospitalListFilter) (string,
 	args := []interface{}{}
 
 	if filter.Keyword != "" {
-		whereClause += " AND (name LIKE ? OR treat_scope LIKE ?)"
-		args = append(args, "%"+filter.Keyword+"%", "%"+filter.Keyword+"%")
+		if clause, arg, ok := search.MatchClause("name, treat_scope", filter.Keyword); ok {
+			whereClause += clause
+			args = append(args, arg)
+		}
 	}
 	if filter.ProvinceCode != "" {
 		whereClause += " AND province_code = ?"
@@ -319,8 +322,10 @@ func (r *HospitalRepo) ListOptions(keyword string) ([]domain.HospitalOptionItem,
 	args := []interface{}{}
 
 	if keyword != "" {
-		whereClause += " AND name LIKE ?"
-		args = append(args, "%"+keyword+"%")
+		if clause, arg, ok := search.MatchClause("name", keyword); ok {
+			whereClause += clause
+			args = append(args, arg)
+		}
 	}
 
 	query := `

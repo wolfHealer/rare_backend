@@ -3,6 +3,7 @@ package repo
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -45,6 +46,68 @@ func (r *PostRepo) IsLiked(postID, userID int64) (bool, error) {
 		`SELECT COUNT(*) FROM post_like WHERE post_id = ? AND user_id = ?`, postID, userID,
 	).Scan(&count)
 	return count > 0, err
+}
+
+func (r *PostRepo) IsFavorited(postID, userID int64) (bool, error) {
+	var count int
+	err := db.MySQL.QueryRow(
+		`SELECT COUNT(*) FROM post_favorite WHERE post_id = ? AND user_id = ?`, postID, userID,
+	).Scan(&count)
+	return count > 0, err
+}
+
+func (r *PostRepo) GetInteractionStatus(postID, userID int64) (liked, favorited bool, err error) {
+	if userID <= 0 {
+		return false, false, nil
+	}
+	err = db.MySQL.QueryRow(`
+		SELECT
+			EXISTS(SELECT 1 FROM post_like WHERE post_id = ? AND user_id = ?),
+			EXISTS(SELECT 1 FROM post_favorite WHERE post_id = ? AND user_id = ?)
+	`, postID, userID, postID, userID).Scan(&liked, &favorited)
+	return liked, favorited, err
+}
+
+func (r *PostRepo) BatchLikedPostIDs(userID int64, postIDs []int64) (map[int64]bool, error) {
+	return batchPostIDsByTable(userID, postIDs, "post_like")
+}
+
+func (r *PostRepo) BatchFavoritedPostIDs(userID int64, postIDs []int64) (map[int64]bool, error) {
+	return batchPostIDsByTable(userID, postIDs, "post_favorite")
+}
+
+func batchPostIDsByTable(userID int64, postIDs []int64, table string) (map[int64]bool, error) {
+	result := make(map[int64]bool)
+	if userID <= 0 || len(postIDs) == 0 {
+		return result, nil
+	}
+
+	placeholders := make([]string, len(postIDs))
+	args := make([]interface{}, 0, len(postIDs)+1)
+	args = append(args, userID)
+	for i, id := range postIDs {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+
+	query := fmt.Sprintf(
+		"SELECT post_id FROM %s WHERE user_id = ? AND post_id IN (%s)",
+		table, strings.Join(placeholders, ","),
+	)
+	rows, err := db.MySQL.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var postID int64
+		if err := rows.Scan(&postID); err != nil {
+			continue
+		}
+		result[postID] = true
+	}
+	return result, rows.Err()
 }
 
 func (r *PostRepo) Unlike(postID, userID int64) error {

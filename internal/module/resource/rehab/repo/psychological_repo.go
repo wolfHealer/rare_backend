@@ -5,6 +5,7 @@ import (
 
 	"rare_backend/internal/module/resource/rehab/domain"
 	"rare_backend/internal/pkg/db"
+	"rare_backend/internal/pkg/search"
 )
 
 type PsychologicalRepo struct{}
@@ -53,8 +54,10 @@ func (r *PsychologicalRepo) buildListWhere(filter domain.PsychOrgListFilter) (st
 		args = append(args, isFree)
 	}
 	if filter.Keyword != "" {
-		whereConditions = append(whereConditions, "(name LIKE ? OR content_intro LIKE ?)")
-		args = append(args, "%"+filter.Keyword+"%", "%"+filter.Keyword+"%")
+		if cond, arg, ok := search.MatchCondition("name, content_intro", filter.Keyword); ok {
+			whereConditions = append(whereConditions, cond)
+			args = append(args, arg)
+		}
 	}
 
 	whereClause := ""

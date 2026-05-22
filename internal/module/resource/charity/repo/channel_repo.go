@@ -6,6 +6,7 @@ import (
 
 	"rare_backend/internal/module/resource/charity/domain"
 	"rare_backend/internal/pkg/db"
+	"rare_backend/internal/pkg/search"
 )
 
 type ChannelRepo struct{}
@@ -47,8 +48,10 @@ func (r *ChannelRepo) buildListWhere(filter domain.ChannelListFilter) (string, [
 		args = append(args, filter.ChannelType)
 	}
 	if filter.Keyword != "" {
-		whereClause += " AND name LIKE ?"
-		args = append(args, "%"+filter.Keyword+"%")
+		if clause, arg, ok := search.MatchClause("name", filter.Keyword); ok {
+			whereClause += clause
+			args = append(args, arg)
+		}
 	}
 	return whereClause, args
 }

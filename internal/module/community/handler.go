@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
+	"log"
 	"rare_backend/internal/middleware"
 	"rare_backend/internal/module/community/domain"
 	"rare_backend/internal/pkg/db"
@@ -66,7 +66,7 @@ func GetPostComments(c *gin.Context) {
 	`
 	rows, err := db.MySQL.Query(query, id)
 	if err != nil {
-		fmt.Printf("Query comments error: %v\n", err)
+		log.Printf("[community] Query comments error: %v", err)
 		respondInternalError(c, "查询评论失败")
 		return
 	}
@@ -100,7 +100,7 @@ func GetPostComments(c *gin.Context) {
 			CreatedAt   time.Time      `db:"created_at"`
 		}
 		if err := rows.Scan(&comment.ID, &comment.UserID, &comment.DisplayName, &comment.Content, &comment.ParentID, &comment.RootID, &comment.CreatedAt); err != nil {
-			fmt.Printf("Scan comment error: %v\n", err)
+			log.Printf("[community] Scan comment error: %v", err)
 			continue
 		}
 
@@ -386,13 +386,14 @@ func GetCommentTree(c *gin.Context) {
 	replyLimit, _ := strconv.Atoi(c.DefaultQuery("reply_limit", "3"))
 
 	offset := (page - 1) * size
+	currentUserID, _ := middleware.GetUserID(c)
 
 	// 2. 查询一级评论总数
 	countQuery := "SELECT COUNT(*) FROM comment WHERE target_type = ? AND target_id = ? AND parent_id = 0 AND status = 1"
 	var total int64
 	err = db.MySQL.QueryRow(countQuery, targetType, targetID).Scan(&total)
 	if err != nil {
-		fmt.Printf("Count comments error: %v\n", err)
+		log.Printf("[community] Count comments error: %v", err)
 		respondInternalError(c, "查询评论总数失败")
 		return
 	}
@@ -417,7 +418,7 @@ func GetCommentTree(c *gin.Context) {
 	`
 	rows, err := db.MySQL.Query(rootCommentsQuery, targetType, targetID, size, offset)
 	if err != nil {
-		fmt.Printf("Query root comments error: %v\n", err)
+		log.Printf("[community] Query root comments error: %v", err)
 		respondInternalError(c, "查询评论列表失败")
 		return
 	}
@@ -437,7 +438,7 @@ func GetCommentTree(c *gin.Context) {
 			&node.Status, &createdAt,
 		)
 		if err != nil {
-			fmt.Printf("Scan root comment error: %v\n", err)
+			log.Printf("[community] Scan root comment error: %v", err)
 			continue
 		}
 		node.UserAvatar = avatar.String
@@ -476,7 +477,7 @@ func GetCommentTree(c *gin.Context) {
 
 		replyRows, err := db.MySQL.Query(repliesQuery, args...)
 		if err != nil {
-			fmt.Printf("Query replies error: %v\n", err)
+			log.Printf("[community] Query replies error: %v", err)
 			// 这里不直接返回错误，而是让主列表正常返回，只是没有回复数据
 		} else {
 			defer replyRows.Close()
@@ -525,6 +526,12 @@ func GetCommentTree(c *gin.Context) {
 		}
 	}
 
+	if currentUserID > 0 && len(rootComments) > 0 {
+		commentIDs := collectCommentTreeIDs(rootComments)
+		likedSet, _ := commentRepo.BatchLikedCommentIDs(currentUserID, commentIDs)
+		applyCommentTreeLiked(rootComments, likedSet)
+	}
+
 	respondPage(c, rootComments, total, page, size)
 }
 
@@ -547,6 +554,7 @@ func GetCommentReplies(c *gin.Context) {
 	sort := c.DefaultQuery("sort", "earliest") // earliest or latest
 
 	offset := (page - 1) * size
+	currentUserID, _ := middleware.GetUserID(c)
 
 	// 2. 获取根评论信息 (用于返回 root_comment)
 	rootCommentQuery := `
@@ -572,7 +580,7 @@ func GetCommentReplies(c *gin.Context) {
 		if err == sql.ErrNoRows {
 			respondNotFound(c, "根评论不存在")
 		} else {
-			fmt.Printf("Query root comment detail error: %v\n", err)
+			log.Printf("[community] Query root comment detail error: %v", err)
 			respondInternalError(c, "查询根评论失败")
 		}
 		return
@@ -585,7 +593,7 @@ func GetCommentReplies(c *gin.Context) {
 	var total int64
 	err = db.MySQL.QueryRow(countQuery, rootID).Scan(&total)
 	if err != nil {
-		fmt.Printf("Count replies error: %v\n", err)
+		log.Printf("[community] Count replies error: %v", err)
 		respondInternalError(c, "查询回复总数失败")
 		return
 	}
@@ -612,7 +620,7 @@ func GetCommentReplies(c *gin.Context) {
 
 	rows, err := db.MySQL.Query(repliesQuery, rootID, size, offset)
 	if err != nil {
-		fmt.Printf("Query replies list error: %v\n", err)
+		log.Printf("[community] Query replies list error: %v", err)
 		respondInternalError(c, "查询回复列表失败")
 		return
 	}
@@ -640,6 +648,19 @@ func GetCommentReplies(c *gin.Context) {
 		item.CreatedAt = createdAt.Format(time.RFC3339)
 
 		repliesList = append(repliesList, &item)
+	}
+
+	if currentUserID > 0 {
+		commentIDs := make([]int64, 0, len(repliesList)+1)
+		commentIDs = append(commentIDs, rootComment.ID)
+		for _, item := range repliesList {
+			commentIDs = append(commentIDs, item.ID)
+		}
+		likedSet, _ := commentRepo.BatchLikedCommentIDs(currentUserID, commentIDs)
+		rootComment.Liked = likedSet[rootComment.ID]
+		for _, item := range repliesList {
+			item.Liked = likedSet[item.ID]
+		}
 	}
 
 	respondOK(c, gin.H{
@@ -729,7 +750,7 @@ func GetCommunityPosts(c *gin.Context) {
 	var total int64
 	err := db.MySQL.QueryRow(countQuery, args...).Scan(&total)
 	if err != nil {
-		fmt.Printf("Count query error: %v\n", err)
+		log.Printf("[community] Count query error: %v", err)
 		respondInternalError(c, "查询总数失败")
 		return
 	}
@@ -762,13 +783,14 @@ func GetCommunityPosts(c *gin.Context) {
 
 	rows, err := db.MySQL.Query(listQuery, args...)
 	if err != nil {
-		fmt.Printf("List query error: %v\n", err)
+		log.Printf("[community] List query error: %v", err)
 		respondInternalError(c, "查询帖子列表失败")
 		return
 	}
 	defer rows.Close()
 
 	var records []PostResponse
+	var postIDs []int64
 	currentUserID, _ := middleware.GetUserID(c)
 
 	for rows.Next() {
@@ -777,23 +799,19 @@ func GetCommunityPosts(c *gin.Context) {
 		var createdAt time.Time
 		var displayName sql.NullString
 		var title sql.NullString
-
-		// 【修改点】定义临时变量接收数据库的 TINYINT (int/int8)
 		var isTopInt int
 		var isRecommendInt int
 
-		// 扫描数据
 		err := rows.Scan(
 			&p.ID, &p.UserID, &displayName, &p.DiseaseID, &p.CategoryID, &p.Type, &title, &p.Content, &imagesBytes,
 			&p.ViewCount, &p.LikeCount, &p.CommentCount, &p.FavoriteCount,
-			&p.IsTop, &p.IsRecommend, &p.Status, &createdAt,
+			&isTopInt, &isRecommendInt, &p.Status, &createdAt,
 		)
 		if err != nil {
-			fmt.Printf("Scan error: %v\n", err)
+			log.Printf("[community] Scan error: %v", err)
 			continue
 		}
 
-		// 处理 Null 字段
 		if displayName.Valid {
 			p.DisplayName = displayName.String
 		}
@@ -801,29 +819,26 @@ func GetCommunityPosts(c *gin.Context) {
 			p.Title = title.String
 		}
 		p.CreatedAt = createdAt.Format(time.RFC3339)
-
-		// 【修改点】将 int 转换为 bool
 		p.IsTop = isTopInt == 1
 		p.IsRecommend = isRecommendInt == 1
 
-		// 处理 Images JSON
 		if len(imagesBytes) > 0 {
 			json.Unmarshal(imagesBytes, &p.Images)
 		} else {
 			p.Images = []string{}
 		}
 
-		// 查询当前用户是否点赞/收藏 (优化：可以在主查询中 LEFT JOIN 或者批量查询，这里简化为默认 false，实际需根据 currentUserID 查询)
-		p.IsLiked = false
-		p.IsFavorited = false
-		if currentUserID > 0 {
-			// 示例：实际生产中建议用 IN 查询批量获取状态，避免 N+1
-			// var likeCount int
-			// db.MySQL.QueryRow("SELECT COUNT(*) FROM post_like WHERE post_id=? AND user_id=?", p.ID, currentUserID).Scan(&likeCount)
-			// p.IsLiked = likeCount > 0
-		}
-
+		postIDs = append(postIDs, p.ID)
 		records = append(records, p)
+	}
+
+	if currentUserID > 0 && len(postIDs) > 0 {
+		likedSet, _ := postRepo.BatchLikedPostIDs(currentUserID, postIDs)
+		favSet, _ := postRepo.BatchFavoritedPostIDs(currentUserID, postIDs)
+		for i := range records {
+			records[i].IsLiked = likedSet[records[i].ID]
+			records[i].IsFavorited = favSet[records[i].ID]
+		}
 	}
 
 	respondPage(c, records, total, page, limit)
@@ -866,14 +881,14 @@ func GetPostDetail(c *gin.Context) {
 	err = db.MySQL.QueryRow(query, id).Scan(
 		&p.ID, &p.UserID, &displayName, &p.DiseaseID, &p.CategoryID, &p.Type, &title, &p.Content, &imagesBytes,
 		&p.ViewCount, &p.LikeCount, &p.CommentCount, &p.FavoriteCount,
-		&p.IsTop, &p.IsRecommend, &p.Status, &rejectReason, &createdAt, &updatedAt,
+		&isTopInt, &isRecommendInt, &p.Status, &rejectReason, &createdAt, &updatedAt,
 	)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
 			respondNotFound(c, "帖子不存在")
 		} else {
-			fmt.Printf("Query post detail error: %v\n", err)
+			log.Printf("[community] Query post detail error: %v", err)
 			respondInternalError(c, "查询失败")
 		}
 		return
@@ -903,15 +918,8 @@ func GetPostDetail(c *gin.Context) {
 	}
 
 	currentUserID, _ := middleware.GetUserID(c)
-	p.IsLiked = false
-	p.IsFavorited = false
-
 	if currentUserID > 0 {
-		var likeCnt, favCnt int
-		db.MySQL.QueryRow("SELECT COUNT(*) FROM post_like WHERE post_id=? AND user_id=?", id, currentUserID).Scan(&likeCnt)
-		db.MySQL.QueryRow("SELECT COUNT(*) FROM post_favorite WHERE post_id=? AND user_id=?", id, currentUserID).Scan(&favCnt)
-		p.IsLiked = likeCnt > 0
-		p.IsFavorited = favCnt > 0
+		p.IsLiked, p.IsFavorited, _ = postRepo.GetInteractionStatus(id, currentUserID)
 	}
 
 	respondOK(c, p)
@@ -973,4 +981,34 @@ func UpdatePost(c *gin.Context) {
 		return
 	}
 	respondOK(c, nil)
+}
+
+func collectCommentTreeIDs(nodes []*CommentTreeNode) []int64 {
+	ids := make([]int64, 0, len(nodes)*4)
+	for _, node := range nodes {
+		if node == nil {
+			continue
+		}
+		ids = append(ids, node.ID)
+		for _, reply := range node.Replies {
+			if reply != nil {
+				ids = append(ids, reply.ID)
+			}
+		}
+	}
+	return ids
+}
+
+func applyCommentTreeLiked(nodes []*CommentTreeNode, likedSet map[int64]bool) {
+	for _, node := range nodes {
+		if node == nil {
+			continue
+		}
+		node.Liked = likedSet[node.ID]
+		for _, reply := range node.Replies {
+			if reply != nil {
+				reply.Liked = likedSet[reply.ID]
+			}
+		}
+	}
 }

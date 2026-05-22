@@ -121,23 +121,23 @@ server listening on :8080
 
 
 第一阶段（P0，1–2 周）
-├── 启动顺序 + 配置外置（config/env）
-├── JWT 校验中间件 + 管理接口鉴权/角色
-├── community：post_like 字段、DeletePost Scan、去掉 user_id 硬编码/body 伪造
-└── 密钥/密码移出仓库
+├── 启动顺序 + 配置外置（config/env） ✅
+├── JWT 校验中间件 + 管理接口鉴权/角色 ✅
+├── community：post_like 字段、DeletePost Scan、去掉 user_id 硬编码/body 伪造 ✅
+└── 密钥/密码移出仓库 ✅
 
 第二阶段（P1，2–4 周）
 ├── 引入 middleware（日志、recovery、auth）
-├── 按模块拆分 handler → service → repo（先从 auth、community 试点）
-├── 统一 API 响应契约（code/message/data）
-└── 数据库 migration（golang-migrate + baseline，见 migrations/）
+├── 按模块拆分 handler → service → repo（先从 auth、community 试点）✅
+├── 统一 API 响应契约（code/message/data）✅
+└── 数据库 migration（golang-migrate + baseline，见 migrations/）✅
 
 第三阶段（P2） 
-├── 消除 N+1（resource 列表 + 社区点赞态批量查询）# todo
+├── 消除 N+1（resource 列表 + 社区点赞态批量查询）✅
 ├── 列表去掉大字段、点赞计数改为增量 # todo
-└── 索引与慢查询（LIKE、JOIN） # todo
+└── 索引与慢查询（LIKE、JOIN）✅ — migration 000002 + `internal/pkg/search`
 
 第四阶段（P3）
-├── 去 fmt.Printf、统一命名与错误处理 # todo
+├── 去 fmt.Printf、统一命名与错误处理 — fmt.Printf 已清理，统一用 log.Printf
 ├── 抽公共 pagination/sqlbuilder/response # todo
 └── 补测试与 CI # todo

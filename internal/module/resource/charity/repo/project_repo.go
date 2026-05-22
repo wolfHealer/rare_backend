@@ -1,10 +1,13 @@
 package repo
 
 import (
+	"fmt"
+	"strings"
 	"time"
 
 	"rare_backend/internal/module/resource/charity/domain"
 	"rare_backend/internal/pkg/db"
+	"rare_backend/internal/pkg/search"
 )
 
 type ProjectRepo struct{}
@@ -73,9 +76,10 @@ func (r *ProjectRepo) buildListWhere(filter domain.ProjectListFilter) (string, [
 		args = append(args, filter.ApplyDifficulty)
 	}
 	if filter.Keyword != "" {
-		likeKeyword := "%" + filter.Keyword + "%"
-		whereClause += " AND (p.name LIKE ? OR p.organizer LIKE ?)"
-		args = append(args, likeKeyword, likeKeyword)
+		if clause, arg, ok := search.MatchClause("p.name, p.organizer", filter.Keyword); ok {
+			whereClause += clause
+			args = append(args, arg)
+		}
 	}
 	return whereClause, args
 }
@@ -138,6 +142,40 @@ func (r *ProjectRepo) ListDiseaseIDs(projectID uint) ([]int, error) {
 		}
 	}
 	return ids, nil
+}
+
+func (r *ProjectRepo) ListDiseaseIDsByProjectIDs(projectIDs []uint) (map[uint][]int, error) {
+	result := make(map[uint][]int)
+	if len(projectIDs) == 0 {
+		return result, nil
+	}
+
+	placeholders := make([]string, len(projectIDs))
+	args := make([]interface{}, len(projectIDs))
+	for i, id := range projectIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+
+	query := fmt.Sprintf(
+		"SELECT project_id, disease_id FROM relief_project_disease_rel WHERE project_id IN (%s)",
+		strings.Join(placeholders, ","),
+	)
+	rows, err := db.MySQL.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var projectID uint
+		var diseaseID int
+		if err := rows.Scan(&projectID, &diseaseID); err != nil {
+			continue
+		}
+		result[projectID] = append(result[projectID], diseaseID)
+	}
+	return result, rows.Err()
 }
 
 func (r *ProjectRepo) GetByID(id uint) (*projectDetailRow, error) {
@@ -312,8 +350,10 @@ func (r *ProjectRepo) buildOptionsWhere(filter domain.ProjectOptionsFilter) (str
 		args = append(args, filter.AuditStatus)
 	}
 	if filter.Keyword != "" {
-		whereClause += " AND name LIKE ?"
-		args = append(args, "%"+filter.Keyword+"%")
+		if clause, arg, ok := search.MatchClause("name", filter.Keyword); ok {
+			whereClause += clause
+			args = append(args, arg)
+		}
 	}
 	return whereClause, args
 }

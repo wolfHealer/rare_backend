@@ -8,6 +8,7 @@ import (
 
 	"rare_backend/internal/module/knowledge/domain"
 	"rare_backend/internal/pkg/db"
+	"rare_backend/internal/pkg/search"
 )
 
 type ArticleRepo struct{}
@@ -216,8 +217,10 @@ func (r *ArticleRepo) List(filter domain.ArticleListFilter) (*domain.ArticleList
 	args := []interface{}{}
 
 	if filter.Keyword != "" {
-		where += " AND (title LIKE ? OR summary LIKE ?)"
-		args = append(args, "%"+filter.Keyword+"%", "%"+filter.Keyword+"%")
+		if clause, arg, ok := search.MatchClause("a.title, a.summary", filter.Keyword); ok {
+			where += clause
+			args = append(args, arg)
+		}
 	}
 	if filter.Status != "" {
 		where += " AND status=?"

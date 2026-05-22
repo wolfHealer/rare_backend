@@ -7,6 +7,7 @@ import (
 
 	"rare_backend/internal/module/auth/domain"
 	"rare_backend/internal/pkg/db"
+	"rare_backend/internal/pkg/search"
 )
 
 type UserRepo struct{}
@@ -150,8 +151,14 @@ func buildUserListWhere(filter domain.UserListFilter) (string, []interface{}) {
 	where := "WHERE 1=1"
 	args := []interface{}{}
 	if filter.Keyword != "" {
-		where += " AND (phone LIKE ? OR display_name LIKE ?)"
-		args = append(args, "%"+filter.Keyword+"%", "%"+filter.Keyword+"%")
+		kw := search.Trim(filter.Keyword)
+		if search.Usable(kw) {
+			where += " AND (phone LIKE ? OR MATCH(display_name) AGAINST(? IN NATURAL LANGUAGE MODE))"
+			args = append(args, kw+"%", kw)
+		} else if kw != "" {
+			where += " AND phone LIKE ?"
+			args = append(args, kw+"%")
+		}
 	}
 	if filter.Status != nil {
 		where += " AND status = ?"

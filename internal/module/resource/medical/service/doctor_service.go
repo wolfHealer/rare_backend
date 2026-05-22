@@ -55,9 +55,18 @@ func (s *DoctorService) List(filter domain.DoctorListFilter) (*domain.DoctorList
 		return nil, domain.ErrQueryList
 	}
 
+	doctorIDs := make([]uint64, 0, len(rows))
+	for _, doc := range rows {
+		doctorIDs = append(doctorIDs, doc.ID)
+	}
+	diseaseMap, _ := s.relRepo.ListDiseaseIDsByDoctorIDs(doctorIDs)
+
 	var list []map[string]interface{}
 	for _, doc := range rows {
-		diseaseIDs, _ := s.relRepo.GetDiseaseIDsByDoctor(doc.ID)
+		diseaseIDs := diseaseMap[doc.ID]
+		if diseaseIDs == nil {
+			diseaseIDs = []uint64{}
+		}
 
 		list = append(list, map[string]interface{}{
 			"id":            doc.ID,

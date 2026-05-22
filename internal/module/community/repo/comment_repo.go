@@ -2,6 +2,8 @@ package repo
 
 import (
 	"database/sql"
+	"fmt"
+	"strings"
 	"time"
 
 	"rare_backend/internal/module/community/domain"
@@ -119,4 +121,38 @@ func (r *CommentRepo) SoftDeleteWithDecrement(commentID, postID int64) error {
 
 func (r *CommentRepo) ErrNoRows(err error) bool {
 	return err == sql.ErrNoRows
+}
+
+func (r *CommentRepo) BatchLikedCommentIDs(userID int64, commentIDs []int64) (map[int64]bool, error) {
+	result := make(map[int64]bool)
+	if userID <= 0 || len(commentIDs) == 0 {
+		return result, nil
+	}
+
+	placeholders := make([]string, len(commentIDs))
+	args := make([]interface{}, 0, len(commentIDs)+1)
+	args = append(args, userID)
+	for i, id := range commentIDs {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+
+	query := fmt.Sprintf(
+		"SELECT comment_id FROM comment_like WHERE user_id = ? AND comment_id IN (%s)",
+		strings.Join(placeholders, ","),
+	)
+	rows, err := db.MySQL.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var commentID int64
+		if err := rows.Scan(&commentID); err != nil {
+			continue
+		}
+		result[commentID] = true
+	}
+	return result, rows.Err()
 }

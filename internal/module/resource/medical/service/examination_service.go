@@ -50,10 +50,19 @@ func (s *ExaminationService) List(filter domain.ExaminationListFilter) (*domain.
 		return nil, domain.ErrQueryList
 	}
 
+	manualIDs := make([]uint64, 0, len(rows))
+	for _, item := range rows {
+		manualIDs = append(manualIDs, item.ID)
+	}
+	diseaseMap, _ := s.relRepo.ListDiseaseIDsByExamManualIDs(manualIDs)
+
 	var list []map[string]interface{}
 	for _, item := range rows {
 		price, duration := mapPriceAndDuration(item.ExamType)
-		diseaseIDs, _ := s.relRepo.GetDiseaseIDsByExamManual(item.ID)
+		diseaseIDs := diseaseMap[item.ID]
+		if diseaseIDs == nil {
+			diseaseIDs = []uint64{}
+		}
 
 		list = append(list, map[string]interface{}{
 			"id":          item.ID,
