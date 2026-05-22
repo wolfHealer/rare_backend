@@ -29,6 +29,7 @@ func respondMessage(c *gin.Context, code int, message string) {
 	response.OKMessage(c, message, nil)
 }
 
+// internal/module/auth/response.go
 func respondServiceError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, domain.ErrInvalidCredentials):
@@ -45,6 +46,13 @@ func respondServiceError(c *gin.Context, err error) {
 		response.BadRequest(c, "无效的状态值")
 	case errors.Is(err, domain.ErrNoUpdateFields):
 		response.BadRequest(c, "未提供需要更新的字段")
+	// 添加短信相关错误
+	case errors.Is(err, domain.ErrInvalidScene):
+		response.BadRequest(c, "无效的场景")
+	case errors.Is(err, domain.ErrTooManyRequests):
+		response.BadRequest(c, "发送过于频繁，请稍后再试")
+	case errors.Is(err, domain.ErrInvalidCode):
+		response.BadRequest(c, "验证码无效或已过期")
 	default:
 		response.InternalError(c, "服务器错误")
 	}

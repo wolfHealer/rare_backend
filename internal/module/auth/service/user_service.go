@@ -185,3 +185,15 @@ func (s *UserService) CreateUser(in domain.CreateUserInput) (int64, error) {
 	}
 	return s.repo.CreateAdmin(in, hashed)
 }
+
+// internal/module/auth/service/user_service.go
+func (s *UserService) UpdateAvatar(id int64, avatarURL string) error {
+	ok, err := s.repo.ExistsByID(id)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return domain.ErrUserNotFound
+	}
+	return s.repo.UpdateAvatar(id, avatarURL)
+}

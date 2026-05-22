@@ -11,6 +11,11 @@ func Register(r *gin.RouterGroup) {
 	auth.POST("/login", login)
 	auth.POST("/register", register)
 
+	// 用户信息接口（需登录）
+	auth.GET("/userinfo", middleware.AuthRequired(), getUserInfo)
+	// 头像上传接口
+	auth.POST("/user/avatar", middleware.AuthRequired(), uploadAvatar)
+
 	// 用户管理（需管理员）
 	users := r.Group("/system/users")
 	users.Use(middleware.AuthRequired(), middleware.AdminRequired())
@@ -24,4 +29,8 @@ func Register(r *gin.RouterGroup) {
 	users.PATCH("/:id/role", UpdateUserRole)
 	// 新增：重置密码接口
 	users.POST("/:id/reset-password", ResetPassword)
+
+	// 短信验证码
+	sms := auth.Group("/sms")
+	sms.POST("/send", sendSMSCode)
 }

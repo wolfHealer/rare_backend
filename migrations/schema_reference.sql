@@ -1096,3 +1096,20 @@ CREATE TABLE `user_follow` (
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
 -- Dump completed on 2026-05-21  1:33:40
+
+
+
+
+-- 创建短信验证码表
+CREATE TABLE IF NOT EXISTS sms_codes (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    phone VARCHAR(20) NOT NULL,
+    code VARCHAR(10) NOT NULL,
+    scene VARCHAR(20) NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expired_at DATETIME NOT NULL,
+    used TINYINT(1) NOT NULL DEFAULT 0,
+    updated_at DATETIME NULL ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_phone_scene (phone, scene),
+    INDEX idx_expired_at (expired_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

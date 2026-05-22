@@ -132,12 +132,12 @@ server listening on :8080
 ├── 统一 API 响应契约（code/message/data）
 └── 数据库 migration（golang-migrate + baseline，见 migrations/）
 
-第三阶段（P2）
-├── 消除 N+1（resource 列表 + 社区点赞态批量查询）
-├── 列表去掉大字段、点赞计数改为增量
-└── 索引与慢查询（LIKE、JOIN）
+第三阶段（P2） 
+├── 消除 N+1（resource 列表 + 社区点赞态批量查询）# todo
+├── 列表去掉大字段、点赞计数改为增量 # todo
+└── 索引与慢查询（LIKE、JOIN） # todo
 
 第四阶段（P3）
-├── 去 fmt.Printf、统一命名与错误处理
-├── 抽公共 pagination/sqlbuilder/response
-└── 补测试与 CI
+├── 去 fmt.Printf、统一命名与错误处理 # todo
+├── 抽公共 pagination/sqlbuilder/response # todo
+└── 补测试与 CI # todo

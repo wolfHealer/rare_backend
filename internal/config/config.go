@@ -104,3 +104,39 @@ func parseCSVEnv(key, fallback string) []string {
 	}
 	return out
 }
+
+// OSSConfig OSS 配置
+type OSSConfig struct {
+	Endpoint        string
+	AccessKeyID     string
+	AccessKeySecret string
+	BucketName      string
+}
+
+func GetOSSConfig() OSSConfig {
+	return OSSConfig{
+		Endpoint:        os.Getenv("OSS_ENDPOINT"),          // 如: oss-cn-hangzhou.aliyuncs.com
+		AccessKeyID:     os.Getenv("OSS_ACCESS_KEY_ID"),     // 你的 AccessKey ID
+		AccessKeySecret: os.Getenv("OSS_ACCESS_KEY_SECRET"), // 你的 AccessKey Secret
+		BucketName:      os.Getenv("OSS_BUCKET_NAME"),       // 你的 Bucket 名称
+	}
+}
+
+// SMSConfig 短信服务配置
+type SMSConfig struct {
+	AccessKeyID      string
+	AccessKeySecret  string
+	SignName         string // 短信签名
+	RegisterTemplate string // 注册验证码模板
+	LoginTemplate    string // 登录验证码模板
+}
+
+func GetSMSConfig() SMSConfig {
+	return SMSConfig{
+		AccessKeyID:      os.Getenv("SMS_ACCESS_KEY_ID"),
+		AccessKeySecret:  os.Getenv("SMS_ACCESS_KEY_SECRET"),
+		SignName:         os.Getenv("SMS_SIGN_NAME"),    // 如: 你的短信签名
+		RegisterTemplate: os.Getenv("SMS_REGISTER_TPL"), // 如: SMS_123456789
+		LoginTemplate:    os.Getenv("SMS_LOGIN_TPL"),    // 如: SMS_987654321
+	}
+}

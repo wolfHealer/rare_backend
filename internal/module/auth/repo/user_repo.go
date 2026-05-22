@@ -224,3 +224,9 @@ func ToUserItem(u domain.User) domain.UserItem {
 	}
 	return item
 }
+
+// internal/module/auth/repo/user_repo.go
+func (r *UserRepo) UpdateAvatar(id int64, avatarURL string) error {
+	_, err := db.MySQL.Exec(`UPDATE user SET avatar = ?, updated_at = ? WHERE id = ?`, avatarURL, time.Now(), id)
+	return err
+}
