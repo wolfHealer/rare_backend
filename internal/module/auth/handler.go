@@ -358,7 +358,8 @@ func sendSMSCode(c *gin.Context) {
 	}
 
 	if err := smsSvc.SendCode(req.Phone, req.Scene); err != nil {
-		respondServiceError(c, err)
+		log.Printf("[auth] send sms phone=%s scene=%s: %v", req.Phone, req.Scene, err)
+		respondSMSError(c, err)
 		return
 	}
 
