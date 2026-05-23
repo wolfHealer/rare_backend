@@ -126,19 +126,27 @@ func GetOSSConfig() OSSConfig {
 
 // SMSConfig 短信服务配置
 type SMSConfig struct {
-	AccessKeyID      string
-	AccessKeySecret  string
-	SignName         string // 短信签名
-	RegisterTemplate string // 注册验证码模板
-	LoginTemplate    string // 登录验证码模板
+	AccessKeyID     string
+	AccessKeySecret string
+
+	// 个人资质：号码认证「短信认证」SendSmsVerifyCode（控制台赠送签名+模板）
+	PNVSSignName     string // SMS_PNVS_SIGN_NAME
+	PNVSTemplateCode string // SMS_PNVS_TEMPLATE_CODE
+
+	// 公司资质：短信服务 dysmsapi SendSms（需企业资质审核签名/模板）
+	SignName         string // SMS_SIGN_NAME
+	RegisterTemplate string // SMS_REGISTER_TPL
+	LoginTemplate    string // SMS_LOGIN_TPL
 }
 
 func GetSMSConfig() SMSConfig {
 	return SMSConfig{
 		AccessKeyID:      os.Getenv("SMS_ACCESS_KEY_ID"),
 		AccessKeySecret:  os.Getenv("SMS_ACCESS_KEY_SECRET"),
-		SignName:         os.Getenv("SMS_SIGN_NAME"),    // 如: 你的短信签名
-		RegisterTemplate: os.Getenv("SMS_REGISTER_TPL"), // 如: SMS_123456789
-		LoginTemplate:    os.Getenv("SMS_LOGIN_TPL"),    // 如: SMS_987654321
+		PNVSSignName:     os.Getenv("SMS_PNVS_SIGN_NAME"),
+		PNVSTemplateCode: os.Getenv("SMS_PNVS_TEMPLATE_CODE"),
+		SignName:         os.Getenv("SMS_SIGN_NAME"),
+		RegisterTemplate: os.Getenv("SMS_REGISTER_TPL"),
+		LoginTemplate:    os.Getenv("SMS_LOGIN_TPL"),
 	}
 }

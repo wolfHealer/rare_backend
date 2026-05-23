@@ -141,3 +141,32 @@ server listening on :8080
 ├── 去 fmt.Printf、统一命名与错误处理 — fmt.Printf 已清理，统一用 log.Printf
 ├── 抽公共 pagination/sqlbuilder/response # todo
 └── 补测试与 CI # todo
+
+
+
+变更说明
+1. internal/module/auth/service/sms_service.go
+
+新增 sendSMSPersonal：调用号码认证 SendSmsVerifyCode（dypnsapi.aliyuncs.com）
+原 sendSMS 改名为 sendSMSCorporate 并整段注释，未删除
+SendCode 现走个人资质接口；切回公司资质时取消注释即可
+2. internal/config/config.go
+
+新增配置项：SMS_PNVS_SIGN_NAME、SMS_PNVS_TEMPLATE_CODE
+3. .env.example
+
+补充个人资质配置说明；公司资质项改为注释示例
+你需要在 .env 中配置
+SMS_ACCESS_KEY_ID=你的AccessKeyId
+SMS_ACCESS_KEY_SECRET=你的AccessKeySecret
+# 号码认证控制台 → 短信认证 → 赠送签名/模板
+SMS_PNVS_SIGN_NAME=速通互联验证码
+SMS_PNVS_TEMPLATE_CODE=100001
+签名与模板须为控制台配套赠送资源，模板变量名需与控制台一致（当前按 code、min 传参，有效期 5 分钟）。
+
+开通入口：短信认证 - 赠送模板配置
+
+RAM 权限需包含 dypns:SendSmsVerifyCode。
+
+切回公司资质
+在 SendCode 中注释 sendSMSPersonal，取消 sendSMSCorporate 注释，并配置 SMS_SIGN_NAME、SMS_REGISTER_TPL、SMS_LOGIN_TPL。

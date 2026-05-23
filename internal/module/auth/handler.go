@@ -222,6 +222,36 @@ func getUserInfo(c *gin.Context) {
 	})
 }
 
+// updateProfile 用户更新自己的信息（昵称、头像）
+func updateProfile(c *gin.Context) {
+	// 从 JWT 中间件获取用户 ID
+	userID, exists := c.Get("user_id")
+	if !exists {
+		respondBadRequest(c, "用户未登录")
+		return
+	}
+	id, ok := userID.(int64)
+	if !ok {
+		respondBadRequest(c, "无效的用户 ID")
+		return
+	}
+
+	var req UpdateProfileRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondBadRequest(c, "参数错误")
+		return
+	}
+
+	if err := userSvc.UpdateUser(id, domain.UpdateUserInput{
+		DisplayName: req.DisplayName,
+		Avatar:      req.Avatar,
+	}); err != nil {
+		respondServiceError(c, err)
+		return
+	}
+	respondOK(c, nil)
+}
+
 func uploadAvatar(c *gin.Context) {
 	userID, ok := middleware.GetUserID(c)
 	if !ok {

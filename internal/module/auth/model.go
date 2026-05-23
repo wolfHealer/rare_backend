@@ -12,12 +12,18 @@ type RegisterRequest struct {
 	Password string `json:"password" binding:"required"`
 }
 
-// UpdateUserRequest HTTP 绑定
+// UpdateUserRequest HTTP 绑定（管理员）
 type UpdateUserRequest struct {
 	DisplayName *string `json:"displayName"`
 	Avatar      *string `json:"avatar"`
 	Role        *int    `json:"role"`
 	Status      *int    `json:"status"`
+}
+
+// UpdateProfileRequest HTTP 绑定（用户自己更新）
+type UpdateProfileRequest struct {
+	DisplayName *string `json:"displayName"`
+	Avatar      *string `json:"avatar"`
 }
 
 // UpdateUserRoleRequest HTTP 绑定

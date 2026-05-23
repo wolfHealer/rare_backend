@@ -13,6 +13,8 @@ func Register(r *gin.RouterGroup) {
 
 	// 用户信息接口（需登录）
 	auth.GET("/userinfo", middleware.AuthRequired(), getUserInfo)
+	// 用户更新自己的信息（昵称、头像）
+	auth.PUT("/userinfo", middleware.AuthRequired(), updateProfile)
 	// 头像上传接口
 	auth.POST("/user/avatar", middleware.AuthRequired(), uploadAvatar)
 
