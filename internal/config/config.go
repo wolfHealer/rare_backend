@@ -111,14 +111,16 @@ type OSSConfig struct {
 	AccessKeyID     string
 	AccessKeySecret string
 	BucketName      string
+	PublicBaseURL   string // 可选，自定义 CDN/域名，如 https://cdn.example.com
 }
 
 func GetOSSConfig() OSSConfig {
 	return OSSConfig{
-		Endpoint:        os.Getenv("OSS_ENDPOINT"),          // 如: oss-cn-hangzhou.aliyuncs.com
-		AccessKeyID:     os.Getenv("OSS_ACCESS_KEY_ID"),     // 你的 AccessKey ID
-		AccessKeySecret: os.Getenv("OSS_ACCESS_KEY_SECRET"), // 你的 AccessKey Secret
-		BucketName:      os.Getenv("OSS_BUCKET_NAME"),       // 你的 Bucket 名称
+		Endpoint:        os.Getenv("OSS_ENDPOINT"),
+		AccessKeyID:     os.Getenv("OSS_ACCESS_KEY_ID"),
+		AccessKeySecret: os.Getenv("OSS_ACCESS_KEY_SECRET"),
+		BucketName:      os.Getenv("OSS_BUCKET_NAME"),
+		PublicBaseURL:   os.Getenv("OSS_PUBLIC_BASE_URL"),
 	}
 }
 

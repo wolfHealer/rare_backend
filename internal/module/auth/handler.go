@@ -2,10 +2,11 @@ package auth
 
 import (
 	"fmt"
+	"log"
+	"mime/multipart"
 	"path/filepath"
+	"strings"
 	"time"
-
-	"github.com/aliyun/aliyun-oss-go-sdk/oss"
 
 	"rare_backend/internal/config"
 	"rare_backend/internal/middleware"
@@ -14,6 +15,7 @@ import (
 	"rare_backend/internal/module/auth/domain"
 	"rare_backend/internal/module/auth/repo"
 	"rare_backend/internal/module/auth/service"
+	"rare_backend/internal/pkg/storage"
 
 	"github.com/gin-gonic/gin"
 )
@@ -221,94 +223,87 @@ func getUserInfo(c *gin.Context) {
 }
 
 func uploadAvatar(c *gin.Context) {
-	// 获取用户ID
 	userID, ok := middleware.GetUserID(c)
 	if !ok {
 		respondBadRequest(c, "用户未登录")
 		return
 	}
 
-	// 获取上传的文件
-	file, err := c.FormFile("file")
+	file, err := formFile(c, "file", "avatar")
 	if err != nil {
 		respondBadRequest(c, "请选择要上传的文件")
 		return
 	}
 
-	// 验证文件类型
-	contentType := file.Header.Get("Content-Type")
-	allowedTypes := map[string]bool{
-		"image/jpeg": true,
-		"image/png":  true,
-		"image/webp": true,
-		"image/gif":  true,
-	}
-	if !allowedTypes[contentType] {
+	contentType, ok := storage.ResolveImageContentType(file.Header.Get("Content-Type"), file.Filename)
+	if !ok {
 		respondBadRequest(c, "只支持 jpeg、png、webp、gif 格式的图片")
 		return
 	}
 
-	// 验证文件大小（限制 5MB）
 	maxSize := int64(5 * 1024 * 1024)
 	if file.Size > maxSize {
 		respondBadRequest(c, "文件大小不能超过 5MB")
 		return
 	}
 
-	// 生成 OSS 文件路径
 	ext := filepath.Ext(file.Filename)
+	if ext == "" {
+		ext = storage.NormalizeImageExt(contentType)
+	}
 	ossPath := fmt.Sprintf("avatars/%d_%d%s", userID, time.Now().Unix(), ext)
 
-	// 获取 OSS 配置
 	cfg := config.GetOSSConfig()
-
-	// 创建 OSS 客户端
-	client, err := oss.New(cfg.Endpoint, cfg.AccessKeyID, cfg.AccessKeySecret)
-	if err != nil {
-		respondServiceError(c, fmt.Errorf("OSS 客户端初始化失败: %v", err))
+	if err := storage.ValidateOSSConfig(cfg); err != nil {
+		log.Printf("[auth] avatar OSS config: %v", err)
+		respondBadRequest(c, "头像上传服务未配置")
 		return
 	}
 
-	// 获取存储空间
-	bucket, err := client.Bucket(cfg.BucketName)
-	if err != nil {
-		respondServiceError(c, fmt.Errorf("获取存储空间失败: %v", err))
-		return
-	}
-
-	// 打开上传的文件
 	srcFile, err := file.Open()
 	if err != nil {
-		respondServiceError(c, fmt.Errorf("打开文件失败: %v", err))
+		log.Printf("[auth] avatar open file: %v", err)
+		respondInternalError(c, "打开文件失败")
 		return
 	}
 	defer srcFile.Close()
 
-	// 设置文件元信息
-	options := []oss.Option{
-		oss.ContentType(contentType),
-		oss.ObjectACL(oss.ACLPublicRead), // 设置为公共读
-	}
-
-	// 上传文件到 OSS
-	err = bucket.PutObject(ossPath, srcFile, options...)
-	if err != nil {
-		respondServiceError(c, fmt.Errorf("上传文件失败: %v", err))
+	if err := storage.Upload(cfg, ossPath, srcFile, contentType); err != nil {
+		log.Printf("[auth] avatar OSS upload: %v", err)
+		respondAvatarUploadError(c, err)
 		return
 	}
 
-	// 构建访问 URL
-	avatarURL := fmt.Sprintf("https://%s.%s/%s", cfg.BucketName, cfg.Endpoint, ossPath)
-
-	// 更新用户头像
+	avatarURL := storage.PublicURL(cfg, ossPath)
 	if err := userSvc.UpdateAvatar(userID, avatarURL); err != nil {
-		// 如果更新数据库失败，尝试删除已上传的文件
-		bucket.DeleteObject(ossPath)
+		_ = storage.Delete(cfg, ossPath)
 		respondServiceError(c, err)
 		return
 	}
 
 	respondOK(c, gin.H{"url": avatarURL})
+}
+
+func formFile(c *gin.Context, names ...string) (*multipart.FileHeader, error) {
+	for _, name := range names {
+		if fh, err := c.FormFile(name); err == nil {
+			return fh, nil
+		}
+	}
+	return nil, fmt.Errorf("no file")
+}
+
+func respondAvatarUploadError(c *gin.Context, err error) {
+	msg := err.Error()
+	if strings.Contains(msg, "must be addressed using the specified endpoint") {
+		respondInternalError(c, "OSS 区域与 Bucket 不匹配，请检查 OSS_ENDPOINT 是否与 Bucket 所在地域一致")
+		return
+	}
+	if strings.Contains(msg, "AccessDenied") {
+		respondInternalError(c, "OSS 访问被拒绝，请检查 AccessKey 权限与 Bucket 名称")
+		return
+	}
+	respondInternalError(c, "上传文件失败")
 }
 
 var smsSvc = service.NewSMSService(repo.NewSMSRepo())

@@ -17,6 +17,10 @@ func respondBadRequest(c *gin.Context, message string) {
 	response.BadRequest(c, message)
 }
 
+func respondInternalError(c *gin.Context, message string) {
+	response.InternalError(c, message)
+}
+
 func respondPage(c *gin.Context, list any, total int64, page, pageSize int) {
 	response.Page(c, list, total, page, pageSize)
 }
