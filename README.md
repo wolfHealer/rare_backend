@@ -44,17 +44,7 @@ export MYSQL_DSN='root:你的密码@tcp(127.0.0.1:3306)/rare_backend?parseTime=t
 export JWT_SECRET='你的长随机密钥'
 ```
 
-### 数据库 Migration
-
-使用 [golang-migrate](https://github.com/golang-migrate/migrate) 管理表结构，详见 [migrations/README.md](migrations/README.md)。
-
-```bash
-make migrate-install   # 首次：安装 migrate CLI
-make migrate-up        # 空库建表（43 张表）
-make migrate-version   # 查看当前版本
-```
-
-`schema_reference.sql` 仅作结构参考；**可执行**的 migration 为 `000001_baseline.up.sql` 及后续增量脚本。
+数据库表结构由 **RDS / 运维侧单独维护**，本仓库不包含建表 SQL 或 migration 脚本。部署前请确保 MySQL 中已有 `rare_backend` 库及业务所需表。
 
 ## 启动服务
 
@@ -83,7 +73,6 @@ server listening on :8080
 | `internal/middleware` | 鉴权等中间件 |
 | `internal/module/*` | 业务模块（auth、community、knowledge、region、resource） |
 | `internal/pkg` | 公共包（db、jwt、hash、[response](docs/api-response-contract.md)） |
-| `migrations/` | 数据库 migration（[说明](migrations/README.md)） |
 | `.env.example` | 配置模板（可提交 Git） |
 
 ## 模块说明
@@ -130,12 +119,11 @@ server listening on :8080
 ├── 引入 middleware（日志、recovery、auth）
 ├── 按模块拆分 handler → service → repo（先从 auth、community 试点）✅
 ├── 统一 API 响应契约（code/message/data）✅
-└── 数据库 migration（golang-migrate + baseline，见 migrations/）✅
 
 第三阶段（P2） 
 ├── 消除 N+1（resource 列表 + 社区点赞态批量查询）✅
 ├── 列表去掉大字段、点赞计数改为增量 # todo
-└── 索引与慢查询（LIKE、JOIN）✅ — migration 000002 + `internal/pkg/search`
+└── 索引与慢查询（LIKE、JOIN）✅ — `internal/pkg/search`
 
 第四阶段（P3）
 ├── 去 fmt.Printf、统一命名与错误处理 — fmt.Printf 已清理，统一用 log.Printf
