@@ -13,7 +13,9 @@ var (
 )
 
 var (
-	ErrInvalidScene    = errors.New("无效的场景")
-	ErrTooManyRequests = errors.New("发送过于频繁，请稍后再试")
-	ErrInvalidCode     = errors.New("验证码无效或已过期")
+	ErrInvalidScene      = errors.New("无效的场景")
+	ErrTooManyRequests   = errors.New("发送过于频繁，请稍后再试")
+	ErrInvalidCode       = errors.New("验证码无效或已过期")
+	ErrFavoriteNotFound  = errors.New("favorite not found")
+	ErrInvalidTargetType = errors.New("invalid target type")
 )

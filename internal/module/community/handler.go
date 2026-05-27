@@ -34,6 +34,25 @@ func LikePost(c *gin.Context) {
 	respondOK(c, result)
 }
 
+// FavoritePost 收藏/取消收藏帖子（toggle）
+func FavoritePost(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		respondBadRequest(c, "无效的帖子 ID")
+		return
+	}
+	userID, ok := middleware.MustGetUserID(c)
+	if !ok {
+		return
+	}
+	result, err := postSvc.ToggleFavorite(id, userID)
+	if err != nil {
+		respondServiceError(c, err)
+		return
+	}
+	respondOK(c, result)
+}
+
 // GetPostComments 获取帖子评论树
 func GetPostComments(c *gin.Context) {
 	// 从 URL 参数中获取帖子 ID

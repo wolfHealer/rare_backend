@@ -6,6 +6,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func RegisterUserRoutes(r *gin.RouterGroup) {
+	r.GET("/posts", ListMyPosts)
+	r.DELETE("/posts/:id", DeleteMyPost)
+}
+
 func Register(r *gin.RouterGroup) {
 	post := r.Group("/community")
 
@@ -26,6 +31,8 @@ func Register(r *gin.RouterGroup) {
 	write.PUT("/posts/:id", UpdatePost)
 	write.DELETE("/posts/:id", DeletePost)
 	write.POST("/posts/:id/like", LikePost)
+	write.POST("/posts/:id/favorite", FavoritePost)
+	write.POST("/posts/:id/collect", FavoritePost)
 	write.POST("/posts/:id/comments", CreateComment)
 	write.PUT("/comments/:id", UpdateComment)
 	write.DELETE("/comments/:id", DeleteComment)

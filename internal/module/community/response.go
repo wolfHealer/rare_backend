@@ -37,6 +37,10 @@ func respondPage(c *gin.Context, list any, total int64, page, pageSize int) {
 	response.Page(c, list, total, page, pageSize)
 }
 
+func respondOKMessage(c *gin.Context, message string, data any) {
+	response.OKMessage(c, message, data)
+}
+
 func respondServiceError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, domain.ErrInvalidID):
@@ -51,6 +55,8 @@ func respondServiceError(c *gin.Context, err error) {
 		response.Forbidden(c, "无权限")
 	case errors.Is(err, domain.ErrNoUpdateFields):
 		response.BadRequest(c, "未提供有效更新字段")
+	case errors.Is(err, domain.ErrInvalidPostStatus):
+		response.BadRequest(c, "无效的 status 参数，可选：published / pending / rejected / deleted")
 	default:
 		response.InternalError(c, "服务器错误")
 	}

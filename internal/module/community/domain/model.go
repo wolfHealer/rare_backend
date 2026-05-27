@@ -7,6 +7,11 @@ type LikeResult struct {
 	LikeCount int  `json:"like_count"`
 }
 
+type FavoriteResult struct {
+	IsFavorited   bool `json:"is_favorited"`
+	FavoriteCount int  `json:"favorite_count"`
+}
+
 type CreatePostInput struct {
 	UserID     int64
 	DiseaseID  *int64

@@ -35,4 +35,11 @@ func Register(r *gin.RouterGroup) {
 	// 短信验证码
 	sms := auth.Group("/sms")
 	sms.POST("/send", sendSMSCode)
+
+	// 用户收藏（需登录）
+	user := r.Group("/user")
+	user.Use(middleware.AuthRequired())
+	user.GET("/favorites", listFavorites)
+	user.DELETE("/favorites", removeFavoriteByTarget)
+	user.DELETE("/favorites/:id", removeFavoriteByID)
 }

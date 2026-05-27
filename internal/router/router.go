@@ -1,6 +1,7 @@
 package router
 
 import (
+	"rare_backend/internal/middleware"
 	"rare_backend/internal/module/auth"
 	"rare_backend/internal/module/community"
 	"rare_backend/internal/module/knowledge"
@@ -22,6 +23,11 @@ func Register(r *gin.Engine) {
 
 	// ===== auth 模块 =====
 	auth.Register(api)
+
+	// ===== 用户中心（我的发布等）=====
+	user := api.Group("/user")
+	user.Use(middleware.AuthRequired())
+	community.RegisterUserRoutes(user)
 
 	// ===== post 模块 =====
 	community.Register(api)

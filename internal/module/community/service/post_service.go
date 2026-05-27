@@ -45,22 +45,65 @@ func (s *PostService) ToggleLike(postID, userID int64) (*domain.LikeResult, erro
 	return &domain.LikeResult{IsLiked: isLiked, LikeCount: likeCount}, nil
 }
 
+func (s *PostService) ToggleFavorite(postID, userID int64) (*domain.FavoriteResult, error) {
+	ok, err := s.repo.ExistsActive(postID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, domain.ErrPostNotFound
+	}
+	isFavorited, err := s.repo.IsFavorited(postID, userID)
+	if err != nil {
+		return nil, err
+	}
+	if isFavorited {
+		if err := s.repo.Unfavorite(postID, userID); err != nil {
+			return nil, err
+		}
+		isFavorited = false
+	} else {
+		if err := s.repo.Favorite(postID, userID); err != nil {
+			return nil, err
+		}
+		isFavorited = true
+	}
+	favoriteCount, err := s.repo.RefreshFavoriteCount(postID)
+	if err != nil {
+		return nil, err
+	}
+	return &domain.FavoriteResult{IsFavorited: isFavorited, FavoriteCount: favoriteCount}, nil
+}
+
 func (s *PostService) Create(in domain.CreatePostInput) (int64, error) {
 	return s.repo.Create(in)
 }
 
 func (s *PostService) Delete(postID, userID int64, isAdmin bool) error {
-	ownerID, err := s.repo.GetOwnerActive(postID)
+	ownerID, status, err := s.repo.GetOwnerAndStatus(postID)
 	if err != nil {
 		if s.repo.ErrNoRows(err) {
 			return domain.ErrPostNotFound
 		}
 		return err
 	}
+	if status == 3 {
+		return domain.ErrPostNotFound
+	}
 	if !isAdmin && ownerID != userID {
 		return domain.ErrForbidden
 	}
 	return s.repo.SoftDelete(postID)
+}
+
+func (s *PostService) ListMyPosts(filter domain.MyPostsFilter) ([]domain.PostListItem, int64, error) {
+	if filter.Page < 1 {
+		filter.Page = 1
+	}
+	if filter.PageSize < 1 || filter.PageSize > 100 {
+		filter.PageSize = 10
+	}
+	return s.repo.ListMyPosts(filter)
 }
 
 func (s *PostService) Update(postID, currentUserID int64, isAdmin bool, in domain.UpdatePostInput) error {
