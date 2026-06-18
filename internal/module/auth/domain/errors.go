@@ -10,7 +10,11 @@ var (
 	ErrInvalidRole        = errors.New("invalid role")
 	ErrInvalidStatus      = errors.New("invalid status")
 	ErrNoUpdateFields     = errors.New("no update fields")
+	ErrAccountDeactivated = errors.New("account already deactivated")
+	ErrCannotDeactivateAdmin = errors.New("admin cannot deactivate self")
 )
+
+const AnonymousDisplayName = "已注销用户"
 
 var (
 	ErrInvalidScene      = errors.New("无效的场景")

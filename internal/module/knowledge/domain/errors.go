@@ -11,4 +11,6 @@ var (
 	ErrCodeRequired    = errors.New("code required")
 	ErrInvalidLevel    = errors.New("invalid level")
 	ErrKeywordRequired = errors.New("keyword required")
+	ErrArticleTagNameExists = errors.New("article tag name exists")
+	ErrArticleTagInUse      = errors.New("article tag in use")
 )

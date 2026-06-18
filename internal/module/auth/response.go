@@ -51,6 +51,10 @@ func respondServiceError(c *gin.Context, err error) {
 		response.BadRequest(c, "无效的状态值")
 	case errors.Is(err, domain.ErrNoUpdateFields):
 		response.BadRequest(c, "未提供需要更新的字段")
+	case errors.Is(err, domain.ErrAccountDeactivated):
+		response.BadRequest(c, "账号已注销")
+	case errors.Is(err, domain.ErrCannotDeactivateAdmin):
+		response.Forbidden(c, "管理员账号不可自助注销")
 	// 添加短信相关错误
 	case errors.Is(err, domain.ErrInvalidScene):
 		response.BadRequest(c, "无效的场景")

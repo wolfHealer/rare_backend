@@ -57,6 +57,16 @@ func respondServiceError(c *gin.Context, err error) {
 		response.BadRequest(c, "未提供有效更新字段")
 	case errors.Is(err, domain.ErrInvalidPostStatus):
 		response.BadRequest(c, "无效的 status 参数，可选：published / pending / rejected / deleted")
+	case errors.Is(err, domain.ErrReportDuplicate):
+		response.BadRequest(c, "您已举报过该帖子")
+	case errors.Is(err, domain.ErrCannotReportSelf):
+		response.BadRequest(c, "不能举报自己的帖子")
+	case errors.Is(err, domain.ErrInvalidReportReason):
+		response.BadRequest(c, "无效的举报类型")
+	case errors.Is(err, domain.ErrReportNotFound):
+		response.NotFound(c, "举报记录不存在")
+	case errors.Is(err, domain.ErrReportAlreadyDone):
+		response.BadRequest(c, "该举报已处理")
 	default:
 		response.InternalError(c, "服务器错误")
 	}

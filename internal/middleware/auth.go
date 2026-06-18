@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 
+	"rare_backend/internal/pkg/db"
 	"rare_backend/internal/pkg/jwt"
 	"rare_backend/internal/pkg/response"
 
@@ -22,6 +23,9 @@ func AuthRequired() gin.HandlerFunc {
 		if !ok {
 			return
 		}
+		if !ensureUserActive(c, claims.UserID) {
+			return
+		}
 		c.Set(ContextUserIDKey, claims.UserID)
 		c.Set(ContextRoleKey, claims.Role)
 		c.Next()
@@ -37,7 +41,7 @@ func OptionalAuth() gin.HandlerFunc {
 			return
 		}
 		claims, err := jwt.ParseToken(token)
-		if err == nil {
+		if err == nil && isUserActive(claims.UserID) {
 			c.Set(ContextUserIDKey, claims.UserID)
 			c.Set(ContextRoleKey, claims.Role)
 		}
@@ -139,6 +143,21 @@ func parseRequestClaims(c *gin.Context) (*jwt.Claims, bool) {
 		return nil, false
 	}
 	return claims, true
+}
+
+func ensureUserActive(c *gin.Context, userID int64) bool {
+	if !isUserActive(userID) {
+		response.Unauthorized(c, "账号已注销或不可用")
+		c.Abort()
+		return false
+	}
+	return true
+}
+
+func isUserActive(userID int64) bool {
+	var status int
+	err := db.MySQL.QueryRow(`SELECT status FROM user WHERE id = ?`, userID).Scan(&status)
+	return err == nil && status == 1
 }
 
 func extractBearerToken(header string) string {

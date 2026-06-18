@@ -33,6 +33,21 @@ func (r *PostRepo) GetOwnerAndStatus(postID int64) (userID int64, status int, er
 	return
 }
 
+// ExistsReportable 帖子存在且未删除（status != 3）
+func (r *PostRepo) ExistsReportable(postID int64) (ownerID int64, ok bool, err error) {
+	var status int
+	err = db.MySQL.QueryRow(
+		`SELECT user_id, status FROM post WHERE id = ?`, postID,
+	).Scan(&ownerID, &status)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return 0, false, nil
+		}
+		return 0, false, err
+	}
+	return ownerID, status != 3, nil
+}
+
 func (r *PostRepo) GetOwnerActive(postID int64) (userID int64, err error) {
 	err = db.MySQL.QueryRow(
 		`SELECT user_id FROM post WHERE id = ? AND status = 1`, postID,

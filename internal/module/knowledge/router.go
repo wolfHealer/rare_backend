@@ -18,6 +18,8 @@ func Register(r *gin.RouterGroup) {
 	k.GET("/categories/tree", GetCategoryTree)
 	k.GET("/category/:categoryId/diseases", GetDiseasesByCategory)
 	k.GET("/tags", GetTags)
+	k.GET("/articles/tags", ListArticleTags)
+	k.GET("/articles/tags/:id", GetArticleTagByID)
 	k.GET("/articles", GetArticles)
 	k.GET("/article/:id", GetArticleByID)
 
@@ -36,4 +38,7 @@ func Register(r *gin.RouterGroup) {
 	admin.POST("/article", CreateArticle)
 	admin.PUT("/article/:id", UpdateArticle)
 	admin.DELETE("/article/:id", DeleteArticle)
+	admin.POST("/articles/tags", CreateArticleTag)
+	admin.PUT("/articles/tags/:id", UpdateArticleTag)
+	admin.DELETE("/articles/tags/:id", DeleteArticleTag)
 }

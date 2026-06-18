@@ -197,3 +197,20 @@ func (s *UserService) UpdateAvatar(id int64, avatarURL string) error {
 	}
 	return s.repo.UpdateAvatar(id, avatarURL)
 }
+
+func (s *UserService) DeactivateAccount(userID int64) error {
+	u, err := s.repo.FindByID(userID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.ErrUserNotFound
+		}
+		return err
+	}
+	if u.Status != 1 {
+		return domain.ErrAccountDeactivated
+	}
+	if u.Role == jwt.RoleAdmin {
+		return domain.ErrCannotDeactivateAdmin
+	}
+	return s.repo.DeactivateAccount(userID)
+}

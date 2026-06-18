@@ -209,18 +209,19 @@ type ArticleItem struct {
 }
 
 type AdminArticleItem struct {
-	ID          uint   `json:"id"`
-	Title       string `json:"title"`
-	Summary     string `json:"summary"`
-	CoverImage  string `json:"coverImage"`
-	SourceName  string `json:"sourceName"`
-	Status      int    `json:"status"`
-	PublishTime string `json:"publishTime"`
-	ViewCount   int64  `json:"viewCount"`
-	IsTop       int    `json:"isTop"`
-	IsRecommend int    `json:"isRecommend"`
-	CreatedAt   string `json:"createdAt"`
-	UpdatedAt   string `json:"updatedAt"`
+	ID          uint             `json:"id"`
+	Title       string           `json:"title"`
+	Summary     string           `json:"summary"`
+	CoverImage  string           `json:"coverImage"`
+	SourceName  string           `json:"sourceName"`
+	Status      int              `json:"status"`
+	PublishTime string           `json:"publishTime"`
+	ViewCount   int64            `json:"viewCount"`
+	IsTop       int              `json:"isTop"`
+	IsRecommend int              `json:"isRecommend"`
+	Tags        []ArticleTagItem `json:"tags"`
+	CreatedAt   string           `json:"createdAt"`
+	UpdatedAt   string           `json:"updatedAt"`
 }
 
 type ArticleBlockItem struct {
@@ -236,6 +237,33 @@ type ArticleTagItem struct {
 	ID   uint   `json:"id"`
 	Name string `json:"name"`
 	Type string `json:"type"`
+}
+
+type CreateArticleTagInput struct {
+	Name string
+	Type string
+}
+
+type UpdateArticleTagInput struct {
+	Name *string
+	Type *string
+}
+
+type ArticleTagListFilter struct {
+	Type string
+}
+
+const ArticleStatusPublished = 2
+
+type ArticleAuthorItem struct {
+	ID          uint   `json:"id"`
+	DisplayName string `json:"displayName"`
+	Avatar      string `json:"avatar"`
+}
+
+type ArticleDiseaseItem struct {
+	ID   uint   `json:"id"`
+	Name string `json:"name"`
 }
 
 type ArticleDetailResponse struct {
@@ -258,8 +286,10 @@ type ArticleDetailResponse struct {
 	SeoKeywords    string `json:"seoKeywords"`
 	SeoDescription string `json:"seoDescription"`
 
-	Blocks []ArticleBlockItem `json:"blocks"`
-	Tags   []ArticleTagItem   `json:"tags"`
+	Blocks   []ArticleBlockItem   `json:"blocks"`
+	Tags     []ArticleTagItem     `json:"tags"`
+	Diseases []ArticleDiseaseItem `json:"diseases"`
+	Author   *ArticleAuthorItem   `json:"author,omitempty"`
 
 	CreatedAt string `json:"createdAt"`
 	UpdatedAt string `json:"updatedAt"`
@@ -317,6 +347,7 @@ type ArticleListFilter struct {
 	Keyword   string
 	Status    string
 	DiseaseID string
+	TagID     string
 	Page      int
 	PageSize  int
 }

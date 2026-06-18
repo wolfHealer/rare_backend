@@ -119,3 +119,15 @@ type UpdateArticleRequest struct {
 	TagIDs     *[]uint                     `json:"tagIds"`
 	DiseaseIDs *[]uint                     `json:"diseaseIds"`
 }
+
+// CreateArticleTagRequest 创建文章标签
+type CreateArticleTagRequest struct {
+	Name string `json:"name" binding:"required,max=100"`
+	Type string `json:"type" binding:"omitempty,max=50"`
+}
+
+// UpdateArticleTagRequest 更新文章标签
+type UpdateArticleTagRequest struct {
+	Name *string `json:"name" binding:"omitempty,max=100"`
+	Type *string `json:"type" binding:"omitempty,max=50"`
+}

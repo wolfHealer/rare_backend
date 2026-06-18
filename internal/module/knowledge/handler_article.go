@@ -126,6 +126,7 @@ func GetArticles(c *gin.Context) {
 		Keyword:   c.DefaultQuery("keyword", ""),
 		Status:    c.DefaultQuery("status", ""),
 		DiseaseID: c.DefaultQuery("diseaseId", ""),
+		TagID:     c.Query("tagId"),
 		Page:      page,
 		PageSize:  pageSize,
 	})

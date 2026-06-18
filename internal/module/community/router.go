@@ -32,8 +32,15 @@ func Register(r *gin.RouterGroup) {
 	write.DELETE("/posts/:id", DeletePost)
 	write.POST("/posts/:id/like", LikePost)
 	write.POST("/posts/:id/favorite", FavoritePost)
-	write.POST("/posts/:id/collect", FavoritePost)
+	write.POST("/posts/:id/report", ReportPost)
 	write.POST("/posts/:id/comments", CreateComment)
 	write.PUT("/comments/:id", UpdateComment)
 	write.DELETE("/comments/:id", DeleteComment)
+
+	// 管理端：举报审核
+	admin := post.Group("")
+	admin.Use(middleware.AuthRequired(), middleware.AdminRequired())
+	admin.GET("/post-reports", ListPostReports)
+	admin.GET("/post-reports/:id", GetPostReport)
+	admin.PUT("/post-reports/:id/handle", HandlePostReport)
 }

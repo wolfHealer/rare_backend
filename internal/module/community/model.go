@@ -28,3 +28,16 @@ type UpdatePostRequest struct {
 type UpdateCommentRequest struct {
 	Content string `json:"content" binding:"required"`
 }
+
+// ReportPostRequest 举报帖子
+type ReportPostRequest struct {
+	Reason      string `json:"reason" binding:"required,oneof=spam abuse illegal misinfo other"`
+	Description string `json:"description" binding:"omitempty,max=500"`
+}
+
+// HandleReportRequest 管理端处理举报
+type HandleReportRequest struct {
+	Status     int    `json:"status" binding:"required,oneof=1 2"`
+	HandleNote string `json:"handleNote" binding:"omitempty,max=200"`
+	RemovePost bool   `json:"removePost"`
+}

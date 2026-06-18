@@ -158,3 +158,72 @@ RAM 权限需包含 dypns:SendSmsVerifyCode。
 
 切回公司资质
 在 SendCode 中注释 sendSMSPersonal，取消 sendSMSCorporate 注释，并配置 SMS_SIGN_NAME、SMS_REGISTER_TPL、SMS_LOGIN_TPL。
+
+
+
+
+
+/api/community/posts/{id}/report:
+    post:
+      tags: [Community]
+      summary: 举报帖子（合规）
+      parameters:
+        - $ref: '#/components/parameters/PathId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReportPostRequest'
+      responses:
+        '200':
+          description: 举报已提交
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseNull'，现有CREATE TABLE `post` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `user_id` bigint NOT NULL COMMENT '发帖用户ID',
+  `disease_id` bigint DEFAULT NULL COMMENT '关联病种ID，可为空',
+  `category_id` bigint DEFAULT NULL COMMENT '关联疾病分类ID，关联category表，可为空',
+  `type` varchar(20) NOT NULL COMMENT '帖子类型：help/experience/emotion/info',
+  `title` varchar(100) DEFAULT NULL COMMENT '标题，可为空（移动端发帖可不填）',
+  `content` text NOT NULL COMMENT '正文内容',
+  `images` json DEFAULT NULL COMMENT '图片URL数组',
+  `view_count` int NOT NULL DEFAULT '0' COMMENT '浏览量',
+  `like_count` int NOT NULL DEFAULT '0' COMMENT '点赞数',
+  `comment_count` int NOT NULL DEFAULT '0' COMMENT '评论数',
+  `favorite_count` int NOT NULL DEFAULT '0' COMMENT '收藏数',
+  `is_top` tinyint NOT NULL DEFAULT '0' COMMENT '是否置顶：0否 1是',
+  `is_recommend` tinyint NOT NULL DEFAULT '0' COMMENT '是否推荐：0否 1是',
+  `status` tinyint NOT NULL DEFAULT '0' COMMENT '状态：0审核中 1正常 2驳回 3删除',
+  `reject_reason` varchar(200) DEFAULT NULL COMMENT '驳回原因',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_post_user_id` (`user_id`),
+  KEY `idx_post_disease_id` (`disease_id`),
+  KEY `idx_post_category_id` (`category_id`),
+  KEY `idx_post_type` (`type`),
+  KEY `idx_post_status` (`status`),
+  KEY `idx_post_created_at` (`created_at`),
+  KEY `idx_post_top_recommend` (`is_top`,`is_recommend`)
+) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='社区帖子表';CREATE TABLE `post_favorite` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `post_id` bigint NOT NULL COMMENT '帖子ID',
+  `user_id` bigint NOT NULL COMMENT '收藏用户ID',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_post_favorite_user` (`post_id`,`user_id`),
+  KEY `idx_post_favorite_user_id` (`user_id`),
+  KEY `idx_post_favorite_created_at` (`created_at`)
+) ENGINE=InnoDB AUTO_INCREMENT=7 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='帖子收藏表';CREATE TABLE `post_like` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `post_id` bigint NOT NULL COMMENT '帖子ID',
+  `user_id` bigint NOT NULL COMMENT '点赞用户ID',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_post_user` (`post_id`,`user_id`),
+  KEY `idx_post_like_user_id` (`user_id`),
+  KEY `idx_post_like_created_at` (`created_at`)
+) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='帖子点赞表'，如果要实现举报，是否需要新增一张post_report表

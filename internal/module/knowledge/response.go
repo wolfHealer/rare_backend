@@ -123,3 +123,20 @@ func respondDiseaseError(c *gin.Context, err error, notFoundMsg string) {
 	}
 	response.InternalError(c, "服务器错误")
 }
+
+func respondArticleTagError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, domain.ErrNotFound):
+		response.NotFound(c, "文章标签不存在")
+	case errors.Is(err, domain.ErrNameRequired):
+		response.BadRequest(c, "标签名称不能为空")
+	case errors.Is(err, domain.ErrNoUpdateFields):
+		response.BadRequest(c, "未提供更新字段")
+	case errors.Is(err, domain.ErrArticleTagNameExists):
+		response.BadRequest(c, "标签名称已存在")
+	case errors.Is(err, domain.ErrArticleTagInUse):
+		response.BadRequest(c, "标签已被文章引用，无法删除")
+	default:
+		response.InternalError(c, "服务器错误")
+	}
+}

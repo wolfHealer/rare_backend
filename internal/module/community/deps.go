@@ -8,6 +8,8 @@ import (
 var (
 	postRepo    = repo.NewPostRepo()
 	commentRepo = repo.NewCommentRepo()
+	reportRepo  = repo.NewReportRepo()
 	postSvc     = service.NewPostService(postRepo)
 	commentSvc  = service.NewCommentService(postRepo, commentRepo)
+	reportSvc   = service.NewReportService(postRepo, reportRepo)
 )

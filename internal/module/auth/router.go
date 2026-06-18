@@ -17,6 +17,8 @@ func Register(r *gin.RouterGroup) {
 	auth.PUT("/userinfo", middleware.AuthRequired(), updateProfile)
 	// 头像上传接口
 	auth.POST("/user/avatar", middleware.AuthRequired(), uploadAvatar)
+	// 账号注销（本人操作）
+	auth.POST("/account/deactivate", middleware.AuthRequired(), deactivateAccount)
 
 	// 用户管理（需管理员）
 	users := r.Group("/system/users")

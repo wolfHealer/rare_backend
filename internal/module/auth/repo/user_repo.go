@@ -2,6 +2,7 @@ package repo
 
 import (
 	"database/sql"
+	"fmt"
 	"strings"
 	"time"
 
@@ -191,6 +192,41 @@ func (r *UserRepo) UpdateDynamic(id int64, fields map[string]interface{}) error 
 func (r *UserRepo) SoftDelete(id int64) error {
 	_, err := db.MySQL.Exec(`UPDATE user SET status = 0, updated_at = ? WHERE id = ?`, time.Now(), id)
 	return err
+}
+
+// DeactivateAccount 用户自助注销：软删 + 匿名化展示信息 + 释放手机号唯一约束
+func (r *UserRepo) DeactivateAccount(id int64) error {
+	now := time.Now()
+	deletedPhone := fmt.Sprintf("deleted_%d_%d", id, now.Unix())
+
+	tx, err := db.MySQL.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var status int
+	err = tx.QueryRow(`SELECT status FROM user WHERE id = ? FOR UPDATE`, id).Scan(&status)
+	if err != nil {
+		return err
+	}
+	if status != 1 {
+		return domain.ErrAccountDeactivated
+	}
+
+	_, err = tx.Exec(`
+		UPDATE user
+		SET status = 0,
+		    display_name = ?,
+		    avatar = '',
+		    phone = ?,
+		    updated_at = ?
+		WHERE id = ? AND status = 1
+	`, domain.AnonymousDisplayName, deletedPhone, now, id)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (r *UserRepo) UpdateRole(id int64, role int) error {
